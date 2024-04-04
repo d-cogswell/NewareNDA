@@ -211,7 +211,7 @@ def _bytes_to_list(bytes):
         Discharge_capacity*multiplier/3600,
         Charge_energy*multiplier/3600,
         Discharge_energy*multiplier/3600,
-        datetime(Y, M, D, h, m, s)
+        datetime(Y, M, D, h, m, s, tzinfo=None)
     ]
     return list
 
