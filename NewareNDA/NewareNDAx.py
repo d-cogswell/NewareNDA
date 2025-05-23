@@ -146,6 +146,8 @@ def _data_interpolation(df):
     # Group by step and run 'inside' interpolation on Time
     df['Time'] = df.groupby('Step')['Time'].transform(
         lambda x: pd.Series.interpolate(x, limit_area='inside'))
+    df['Timestamp'] = df.groupby('Step')['Timestamp'].transform(
+        lambda x: pd.Series.interpolate(x, limit_area='inside'))
 
     # Perform extrapolation to generate the remaining missing Time
     nan_mask2 = df['Time'].notnull()
@@ -154,10 +156,9 @@ def _data_interpolation(df):
     df['Time'] = df['Time'].where(nan_mask2, time)
 
     # Fill in missing Timestamps
-    time_inc = df['Time'].diff().groupby(nan_mask.shift().cumsum()).cumsum()
-    timestamp = df['Timestamp'].ffill() + \
-        pd.to_timedelta(time_inc.fillna(0), unit='s')
-    df['Timestamp'] = df['Timestamp'].where(nan_mask, timestamp)
+    time_inc = df['Timestamp'].diff().ffill().groupby(nan_mask2.cumsum()).cumsum()
+    timestamp = df['Timestamp'].ffill() + time_inc.shift()
+    df['Timestamp'] = df['Timestamp'].where(nan_mask2, timestamp)
 
     # Integrate to get capacity and fill missing values
     capacity = df['Time'].diff()*abs(df['Current(mA)'])/3600
