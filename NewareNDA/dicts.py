@@ -7,7 +7,7 @@ rec_columns = [
 # Define precision of fields
 dtype_dict = {
     'Index': 'uint32',
-    'Cycle': 'uint16',
+    'Cycle': 'uint32',
     'Step': 'uint32',
     'Status': 'category',
     'Time': 'float32',
