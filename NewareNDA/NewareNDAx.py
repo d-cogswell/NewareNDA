@@ -533,7 +533,7 @@ def _read_ndc_14_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih8s', bytes[132:-59]):
+        for i in struct.iter_unpack('<isffff12siiih8s', bytes[132:-4]):
             Time = i[0]
             [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
             [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
