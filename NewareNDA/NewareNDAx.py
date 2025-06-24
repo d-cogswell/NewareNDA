@@ -94,49 +94,14 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             # Merge dataframes
             data_df = data_df.merge(runInfo_df, how='left', on='Index')
             data_df['Step'] = data_df['Step'].ffill()
-            data_df = data_df.merge(step_df, how='left', on='Step').reindex(
-                columns=rec_columns + ['Step_Index'])
-            rec_time_steps = None
-            if 'Step.xml' in zf.namelist():
-                try:
-                    rec_time_steps: dict[int, float] = {}
-
-                    # Read the XML file
-                    xml_str = zf.read('Step.xml').decode('gb2312')
-                    root = ET.fromstring(xml_str)
-
-                    # Get time record step for each step
-                    step_info = root.find('config/Step_Info')
-                    for step_elem in step_info:
-                        step_id = int(step_elem.attrib.get('Step_ID'))
-                        time_elem = step_elem.find('Record/Main/Time')
-                        if time_elem is not None:
-                            time_value = int(time_elem.attrib.get('Value'))  # ms
-                            time_value = -(-time_value // 100) / 10  # s rounded up to nearest 0.1
-                            rec_time_steps[step_id] = time_value
-                        else:
-                            rec_time_steps[step_id] = None
-
-                    # If there is a global measurement time, apply it to all steps
-                    protocol_time = root.find('config/Whole_Prt/Record/Main/Time')
-                    if protocol_time is not None:
-                        time_value = int(protocol_time.attrib.get('Value'))  # ms
-                        time_value = -(-time_value // 100) / 10  # s rounded up to nearest 0.1
-                        rec_time_steps = {
-                            k: time_value if v is None else min(v, time_value)
-                            for k, v in rec_time_steps.items()
-                        }
-                    else:  # Remove steps without a time value
-                        rec_time_steps = {k: v for k, v in rec_time_steps.items() if v is not None}
-
-                except (ValueError, KeyError, TypeError, ET.ParseError) as e:
-                    msg = f'Error trying to read Step.xml: {e}. Interpolation may not be accurate.'
-                    logger.warning(msg)
+            data_df = data_df.merge(step_df, how='left', on='Step')
 
             # Fill in missing data - Neware appears to fabricate data
             if data_df.isnull().any(axis=None):
-                _data_interpolation(data_df, rec_time_steps)
-            data_df.drop(columns=['Step_Index'], inplace=True)
+                _data_interpolation(data_df)
+
+            data_df = data_df.reindex(columns=rec_columns)
+
 
         # Read and merge Aux data from ndc files
         aux_df = pd.DataFrame([])
@@ -170,45 +135,31 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
     return data_df.astype(dtype=dtype_dict)
 
 
-def _data_interpolation(df, rec_time_steps: dict[int, float] | None = None):
+def _data_interpolation(df):
     """
     Some ndax from from BTS Server 8 do not seem to contain a complete dataset.
     This helper function fills in missing times, capacities, and energies.
     """
-    # Fill missing times using rec_time_steps, found from Step.xml
-    if any(df['Step_Index'] > 10000):
-        msg = "Could not interpret Step_Index from ndc file. "
-        logger.warning(msg)
-    elif rec_time_steps:
-        logger.warning("IMPORTANT: This ndax has missing data. The output from "
-                   "NewareNDA contains interpolated data based on the Step.xml!")
-        # Create a map of dt (s) values for each step index
-        dt = df['Step_Index'].map(rec_time_steps)
 
-        # Add dt increments to missing Time values, round down to nearest dt
-        nan_mask = df['Time'].notna() | dt.isna()
-        time_inc = dt.groupby(nan_mask.cumsum()).cumsum().shift(1)
-        time_ffilled = df['Time'].ffill()
-        # Round down to nearest dt - needs rounding and flooring to avoid floating point errors
-        # Errors start showing up at ~14 decimal places
-        df['Time'] = df['Time'].where(nan_mask, np.floor(round((time_ffilled+time_inc)/dt,10))*dt)
-        # Fill missing timestamps based on new Time values
-        # Recalculate time_inc as some might get rounded down
-        time_inc = df['Time']-time_ffilled
-        df['Timestamp'] = df['Timestamp'].where(
-            nan_mask,
-            df['Timestamp'].ffill() + pd.to_timedelta(time_inc.fillna(0), unit='s'),
-        )
+    # Rows missing from runinfo
+    nan_mask0 = df["Time"].notna()
 
-    # If there are remaining missing times, fill them with best guess (linear interpolation)
+    # Try to get time by forward filling differences
+    if "dt" in df.columns:
+        df["dt"] = df["dt"].ffill()
+        cdt = df["dt"].ffill().groupby(nan_mask0.cumsum().shift()).cumsum()
+        df["Time"] = df["Time"].ffill()
+        df["Time"] = df["Time"].where(nan_mask0, df["Time"] + cdt)
+
+    # If no dt col, or there still are remaining missing times, use linear interpolation
     nan_mask = df['Time'].notna()
     if any(~nan_mask):
-        logger.warning("IMPORTANT: This ndax has missing data. The output from "
-                   "NewareNDA contains interpolated data using linear interpolation!")
+        logger.warning(
+            "IMPORTANT: There were missing Time values in the ndax file! "
+            "Using linear interpolation and extrapolation, which may not be accurate.",
+        )
         # Group by step and run 'inside' interpolation on Time
         df['Time'] = df.groupby('Step')['Time'].transform(
-            lambda x: pd.Series.interpolate(x, limit_area='inside'))
-        df['Timestamp'] = df.groupby('Step')['Timestamp'].transform(
             lambda x: pd.Series.interpolate(x, limit_area='inside'))
 
         # Perform extrapolation to generate the remaining missing Time
@@ -217,10 +168,12 @@ def _data_interpolation(df, rec_time_steps: dict[int, float] | None = None):
         time = df['Time'].ffill() + time_inc.shift()
         df['Time'] = df['Time'].where(nan_mask, time)
 
-        # Fill in missing Timestamps
-        time_inc = df['Timestamp'].diff().ffill().groupby(nan_mask.cumsum()).cumsum()
-        timestamp = df['Timestamp'].ffill() + time_inc.shift()
-        df['Timestamp'] = df['Timestamp'].where(nan_mask, timestamp)
+    # Generate Timestamp based on Time
+    # Steps always start at 0 with timestamp recorded so use first timestamp + Time
+    df["Timestamp"] = df["Timestamp"].where(
+        nan_mask0,
+        df.groupby("Step")["Timestamp"].transform("first") + pd.to_timedelta(df["Time"], unit="s"),
+    )
 
     # Integrate to get capacity and fill missing values
     nan_mask = df['Charge_Capacity(mAh)'].notna()
@@ -243,6 +196,19 @@ def _data_interpolation(df, rec_time_steps: dict[int, float] | None = None):
     df['Charge_Energy(mWh)'] = df['Charge_Energy(mWh)'].where(nan_mask, chg)
     df['Discharge_Energy(mWh)'] = df['Discharge_Energy(mWh)'].where(nan_mask, dch)
 
+    # Sanity checks
+    if any(df["Timestamp"].diff() < pd.Timedelta(0)):
+        logger.warning(
+            "IMPORTANT: This ndax has negative jumps in the 'Timestamp' column! "
+            "This can sometimes happen in the ndax file itself. "
+            "Use the 'Time' column for analysis.",
+        )
+    if any(df.groupby("Step")["Time"].diff() < 0):
+        logger.warning(
+            "IMPORTANT: This ndax has negative jumps in the Time column! "
+            "There may be issues with read_ndc for this file type.",
+        )
+
 
 def read_ndc(file):
     """
@@ -260,7 +226,7 @@ def read_ndc(file):
         # Get ndc file version and filetype
         [ndc_filetype] = struct.unpack('<B', mm[0:1])
         [ndc_version] = struct.unpack('<B', mm[2:3])
-        logger.debug(f"NDC version: {ndc_version} filetype: {ndc_filetype}")
+        logger.warning(f"NDC version: {ndc_version} filetype: {ndc_filetype}")
 
         try:
             f = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
@@ -532,26 +498,28 @@ def _read_ndc_14_filetype_18(mm):
     rec = []
     mm.seek(header)
     while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih8s', bytes[132:-4]):
-            Time = i[0]
-            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
-            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
-            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
-            Msec = i[10]
-            if Index != 0:
-                rec.append([Time/1000,
-                            Charge_Capacity*1000, Discharge_Capacity*1000,
-                            Charge_Energy*1000, Discharge_Energy*1000,
-                            datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
-
-    # Create DataFrame
-    df = pd.DataFrame(rec, columns=[
-        'Time',
-        'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
-        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
-        'Timestamp', 'Step', 'Index']).astype({'Time': 'float'})
-    df['Step'] = _count_changes(df['Step'])
+        rec.extend(struct.iter_unpack('<ixffff8xiiiih8x',mm.read(record_len)[132:-4]))
+    cols = [
+        "Time",
+        "Charge_Capacity(mAh)",
+        "Discharge_Capacity(mAh)",
+        "Charge_Energy(mWh)",
+        "Discharge_Energy(mWh)",
+        "dt",
+        "uts_s",
+        "Step",
+        "Index",
+        "ms",
+    ]
+    df = pd.DataFrame(rec, columns=cols)
+    df["Time"] /= 1000
+    df["dt"] /= 1000
+    df["Charge_Capacity(mAh)"] *= 1000
+    df["Discharge_Capacity(mAh)"] *= 1000
+    df["Charge_Energy(mWh)"] *= 1000
+    df["Discharge_Energy(mWh)"] *= 1000
+    df["Timestamp"] = pd.to_datetime(df["uts_s"] + df["ms"] / 1000, unit='s', utc=True)
+    df = df.drop(columns=["uts_s", "ms"])
 
     # Convert timestamp to local timezone
     tz = datetime.now().astimezone().tzinfo
