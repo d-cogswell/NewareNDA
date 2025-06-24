@@ -226,7 +226,6 @@ def read_ndc(file):
         # Get ndc file version and filetype
         [ndc_filetype] = struct.unpack('<B', mm[0:1])
         [ndc_version] = struct.unpack('<B', mm[2:3])
-        logger.warning(f"NDC version: {ndc_version} filetype: {ndc_filetype}")
 
         try:
             f = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
