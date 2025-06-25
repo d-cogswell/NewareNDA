@@ -414,59 +414,27 @@ def _read_ndc_11_filetype_7(mm):
 
 
 def _read_ndc_11_filetype_18(mm):
-    mm_size = mm.size()
-    record_len = 4096
-    header = 4096
-
-    # Read data records
-    rec = []
-    mm.seek(header)
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih', bytes[132:-63]):
-            Time = i[0]
-            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
-            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
-            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
-            Msec = i[10]
-            if Index != 0:
-                rec.append([Time/1000,
-                            Charge_Capacity/3600, Discharge_Capacity/3600,
-                            Charge_Energy/3600, Discharge_Energy/3600,
-                            datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
-
-    # Create DataFrame
-    df = pd.DataFrame(rec, columns=[
-        'Time',
-        'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
-        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
-        'Timestamp', 'Step', 'Index']).astype({'Time': 'float'})
-    df['Step'] = _count_changes(df['Step'])
-
-    # Convert timestamp to local timezone
-    tz = datetime.now().astimezone().tzinfo
-    df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
-
-    return df
+    return _read_ndc_filetype_18(mm, '<ixffff8xiiiih', 132, -63)
 
 
 def _read_ndc_14_filetype_1(mm):
     mm_size = mm.size()
     record_len = 4096
     header = 4096
+    data = []
 
-    # Read data records
-    rec = []
     mm.seek(header)
     while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<ff', bytes[132:-4]):
-            if (i[0] != 0):
-                rec.append([i[0], 1000*i[1]])
+        chunk = mm.read(record_len)[132:-4]
+        arr = np.frombuffer(chunk, dtype=np.float32).reshape(-1, 2)
+        arr = arr[arr[:, 0] != 0]
+        data.append(arr)
 
-    # Create DataFrame
-    df = pd.DataFrame(rec, columns=['Voltage', 'Current(mA)'])
-    df['Index'] = df.index + 1
+    stacked = np.vstack(data) if data else np.empty((0, 2), dtype=np.float32)
+
+    df = pd.DataFrame(stacked, columns=['Voltage', 'Current(mA)'])
+    df['Current(mA)'] *= 1000  # A -> mA
+    df['Index'] = np.arange(1, len(df) + 1)
     return df
 
 
@@ -494,43 +462,7 @@ def _read_ndc_14_filetype_7(mm):
 
 
 def _read_ndc_14_filetype_18(mm):
-    mm_size = mm.size()
-    record_len = 4096
-    header = 4096
-
-    # Read data records
-    rec = []
-    mm.seek(header)
-    while mm.tell() < mm_size:
-        rec.extend(struct.iter_unpack('<ixffff8xiiiih8x',mm.read(record_len)[132:-4]))
-    cols = [
-        "Time",
-        "Charge_Capacity(mAh)",
-        "Discharge_Capacity(mAh)",
-        "Charge_Energy(mWh)",
-        "Discharge_Energy(mWh)",
-        "dt",
-        "uts_s",
-        "Step",
-        "Index",
-        "ms",
-    ]
-    df = pd.DataFrame(rec, columns=cols)
-    df= df[df["uts_s"] != 0]
-    df["Time"] /= 1000
-    df["dt"] /= 1000
-    df["Charge_Capacity(mAh)"] *= 1000
-    df["Discharge_Capacity(mAh)"] *= 1000
-    df["Charge_Energy(mWh)"] *= 1000
-    df["Discharge_Energy(mWh)"] *= 1000
-    df["Timestamp"] = pd.to_datetime(df["uts_s"] + df["ms"] / 1000, unit='s', utc=True)
-    df = df.drop(columns=["uts_s", "ms"])
-
-    # Convert timestamp to local timezone
-    tz = datetime.now().astimezone().tzinfo
-    df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
-
-    return df
+    return _read_ndc_filetype_18(mm, '<ixffff8xiiiih8x', 132, -4)
 
 
 def _read_ndc_17_filetype_1(mm):
@@ -559,16 +491,39 @@ def _read_ndc_17_filetype_7(mm):
 
 
 def _read_ndc_17_filetype_18(mm):
+    return _read_ndc_filetype_18(mm,'<ixffff8xiiiih53x', 132, -64)
+
+
+def _read_ndc_filetype_18(
+        mm: mmap.mmap,
+        fmt: str,
+        start: int,
+        end: int,
+        record_len: int = 4096,
+        header_len: int = 4096,
+):
+    """Read runInfo ndc files.
+
+    Args:
+        mm (mmap.mmap): Memory-mapped file object.
+        fmt (str): Struct format string for unpacking the data.
+        start (int): Start index for unpacking.
+        end (int): End index for unpacking.
+        record_len (int): Length of each record in bytes.
+        header_len (int): Length of the header in bytes.
+
+    Returns:
+        pd.DataFrame: DataFrame containing the unpacked data.
+
+    """
     mm_size = mm.size()
-    record_len = 4096
-    header = 4096
 
     # Read data records
-    rec = []
-    mm.seek(header)
-    fmt = '<ixffff8xiiiih53x'
+    rec: list[tuple] = []
+    mm.seek(header_len)
     while mm.tell() < mm_size:
-        rec.extend(struct.iter_unpack(fmt,mm.read(record_len)[132:-64]))
+        # Unpack bytes, keep rows with non-zero index
+        rec.extend([i for i in struct.iter_unpack(fmt, mm.read(record_len)[start:end]) if i[8] != 0])
     cols = [
         "Time",
         "Charge_Capacity(mAh)",
@@ -582,19 +537,19 @@ def _read_ndc_17_filetype_18(mm):
         "ms",
     ]
     df = pd.DataFrame(rec, columns=cols)
-    df= df[df["uts_s"] != 0]
-    df["Time"] /= 1000
-    df["dt"] /= 1000
-    df["Charge_Capacity(mAh)"] *= 1000
-    df["Discharge_Capacity(mAh)"] *= 1000
-    df["Charge_Energy(mWh)"] *= 1000
-    df["Discharge_Energy(mWh)"] *= 1000
+    df["Time"] /= 1000  # ms -> s
+    df["dt"] /= 1000  # ms -> s
+    df["Charge_Capacity(mAh)"] *= 1000  # Ah -> mAh
+    df["Discharge_Capacity(mAh)"] *= 1000  # Ah -> mAh
+    df["Charge_Energy(mWh)"] *= 1000  # Wh -> mWh
+    df["Discharge_Energy(mWh)"] *= 1000  # Wh -> mWh
     df["Timestamp"] = pd.to_datetime(df["uts_s"] + df["ms"] / 1000, unit='s', utc=True)
-    df = df.drop(columns=["uts_s", "ms"])
 
     # Convert timestamp to local timezone
     tz = datetime.now().astimezone().tzinfo
     df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
+
+    df = df.drop(columns=["uts_s", "ms"])
 
     return df
 
