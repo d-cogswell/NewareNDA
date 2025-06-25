@@ -516,6 +516,7 @@ def _read_ndc_14_filetype_18(mm):
         "ms",
     ]
     df = pd.DataFrame(rec, columns=cols)
+    df= df[df["uts_s"] != 0]
     df["Time"] /= 1000
     df["dt"] /= 1000
     df["Charge_Capacity(mAh)"] *= 1000
