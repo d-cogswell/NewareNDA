@@ -421,20 +421,19 @@ def _read_ndc_14_filetype_1(mm):
     mm_size = mm.size()
     record_len = 4096
     header = 4096
-    data = []
 
+    # Read data records
+    rec = []
     mm.seek(header)
     while mm.tell() < mm_size:
-        chunk = mm.read(record_len)[132:-4]
-        arr = np.frombuffer(chunk, dtype=np.float32).reshape(-1, 2)
-        arr = arr[arr[:, 0] != 0]
-        data.append(arr)
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<ff', bytes[132:-4]):
+            if (i[0] != 0):
+                rec.append([i[0], 1000*i[1]])
 
-    stacked = np.vstack(data) if data else np.empty((0, 2), dtype=np.float32)
-
-    df = pd.DataFrame(stacked, columns=['Voltage', 'Current(mA)'])
-    df['Current(mA)'] *= 1000  # A -> mA
-    df['Index'] = np.arange(1, len(df) + 1)
+    # Create DataFrame
+    df = pd.DataFrame(rec, columns=['Voltage', 'Current(mA)'])
+    df['Index'] = df.index + 1
     return df
 
 
