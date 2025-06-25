@@ -565,26 +565,31 @@ def _read_ndc_17_filetype_18(mm):
     # Read data records
     rec = []
     mm.seek(header)
+    fmt = '<ixffff8xiiiih53x'
     while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih53s', bytes[232:-64]):
-            Time = i[0]
-            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
-            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
-            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
-            Msec = i[10]
-            if Index != 0:
-                rec.append([Time/1000,
-                            Charge_Capacity*1000, Discharge_Capacity*1000,
-                            Charge_Energy*1000, Discharge_Energy*1000,
-                            datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
-
-    # Create DataFrame
-    df = pd.DataFrame(rec, columns=[
-        'Time',
-        'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
-        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
-        'Timestamp', 'Step', 'Index'])
+        rec.extend(struct.iter_unpack(fmt,mm.read(record_len)[132:-64]))
+    cols = [
+        "Time",
+        "Charge_Capacity(mAh)",
+        "Discharge_Capacity(mAh)",
+        "Charge_Energy(mWh)",
+        "Discharge_Energy(mWh)",
+        "dt",
+        "uts_s",
+        "Step",
+        "Index",
+        "ms",
+    ]
+    df = pd.DataFrame(rec, columns=cols)
+    df= df[df["uts_s"] != 0]
+    df["Time"] /= 1000
+    df["dt"] /= 1000
+    df["Charge_Capacity(mAh)"] *= 1000
+    df["Discharge_Capacity(mAh)"] *= 1000
+    df["Charge_Energy(mWh)"] *= 1000
+    df["Discharge_Energy(mWh)"] *= 1000
+    df["Timestamp"] = pd.to_datetime(df["uts_s"] + df["ms"] / 1000, unit='s', utc=True)
+    df = df.drop(columns=["uts_s", "ms"])
 
     # Convert timestamp to local timezone
     tz = datetime.now().astimezone().tzinfo
