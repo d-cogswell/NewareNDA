@@ -150,6 +150,11 @@ def _data_interpolation(df):
         cdt = df["dt"].ffill().groupby(nan_mask0.cumsum().shift()).cumsum()
         df["Time"] = df["Time"].ffill()
         df["Time"] = df["Time"].where(nan_mask0, df["Time"] + cdt)
+        df["Timestamp"] = df["Timestamp"].ffill()
+        df["Timestamp"] = df["Timestamp"].where(
+            nan_mask0,
+            df["Timestamp"] + pd.to_timedelta(cdt, unit="s"),
+        )
 
     # If no dt col, or there still are remaining missing times, use linear interpolation
     nan_mask = df['Time'].notna()
@@ -161,6 +166,8 @@ def _data_interpolation(df):
         # Group by step and run 'inside' interpolation on Time
         df['Time'] = df.groupby('Step')['Time'].transform(
             lambda x: pd.Series.interpolate(x, limit_area='inside'))
+        df['Timestamp'] = df.groupby('Step')['Timestamp'].transform(
+            lambda x: pd.Series.interpolate(x, limit_area='inside'))
 
         # Perform extrapolation to generate the remaining missing Time
         nan_mask = df['Time'].notna()
@@ -168,12 +175,10 @@ def _data_interpolation(df):
         time = df['Time'].ffill() + time_inc.shift()
         df['Time'] = df['Time'].where(nan_mask, time)
 
-    # Generate Timestamp based on Time
-    # Steps always start at 0 with timestamp recorded so use first timestamp + Time
-    df["Timestamp"] = df["Timestamp"].where(
-        nan_mask0,
-        df.groupby("Step")["Timestamp"].transform("first") + pd.to_timedelta(df["Time"], unit="s"),
-    )
+        # Fill in missing Timestamps
+        time_inc = df['Timestamp'].diff().ffill().groupby(nan_mask.cumsum()).cumsum()
+        timestamp = df['Timestamp'].ffill() + time_inc.shift()
+        df['Timestamp'] = df['Timestamp'].where(nan_mask, timestamp)
 
     # Integrate to get capacity and fill missing values
     nan_mask = df['Charge_Capacity(mAh)'].notna()
