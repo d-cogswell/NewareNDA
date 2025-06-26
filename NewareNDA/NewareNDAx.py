@@ -414,7 +414,9 @@ def _read_ndc_11_filetype_7(mm):
 
 
 def _read_ndc_11_filetype_18(mm):
-    return _read_ndc_filetype_18(mm, '<ixffff8xiiiih', 132, -63)
+    df = _read_ndc_filetype_18(mm, '<ixffff8xiiiih', 132, -16, I_mult=1/3600)
+    df['Step'] = _count_changes(df['Step'])
+    return df
 
 
 def _read_ndc_14_filetype_1(mm):
@@ -461,7 +463,9 @@ def _read_ndc_14_filetype_7(mm):
 
 
 def _read_ndc_14_filetype_18(mm):
-    return _read_ndc_filetype_18(mm, '<ixffff8xiiiih8x', 132, -4)
+    df = _read_ndc_filetype_18(mm, '<ixffff8xiiiih8x', 132, -4)
+    df["Step"] = _count_changes(df["Step"])
+    return df
 
 
 def _read_ndc_17_filetype_1(mm):
@@ -500,6 +504,7 @@ def _read_ndc_filetype_18(
         end: int,
         record_len: int = 4096,
         header_len: int = 4096,
+        I_mult: float = 1000,
 ):
     """Read runInfo ndc files.
 
@@ -538,10 +543,10 @@ def _read_ndc_filetype_18(
     df = pd.DataFrame(rec, columns=cols)
     df["Time"] /= 1000  # ms -> s
     df["dt"] /= 1000  # ms -> s
-    df["Charge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Discharge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Charge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["Discharge_Energy(mWh)"] *= 1000  # Wh -> mWh
+    df["Charge_Capacity(mAh)"] *= I_mult  # -> mAh
+    df["Discharge_Capacity(mAh)"] *= I_mult  # -> mAh
+    df["Charge_Energy(mWh)"] *= I_mult  # -> mWh
+    df["Discharge_Energy(mWh)"] *= I_mult  # -> mWh
     df["Timestamp"] = pd.to_datetime(df["uts_s"] + df["ms"] / 1000, unit='s', utc=True)
 
     # Convert timestamp to local timezone
