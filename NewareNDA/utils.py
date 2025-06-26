@@ -1,7 +1,11 @@
 import logging
+import numpy as np
+from .dicts import state_dict
 
 logger = logging.getLogger('newarenda')
 
+charge_keys = [k for k,v in state_dict.items() if v.endswith("_Chg")]
+discharge_keys = [k for k,v in state_dict.items() if v.endswith("_DChg")]
 
 def _generate_cycle_number(df, cycle_mode='chg'):
     """
@@ -17,51 +21,29 @@ def _generate_cycle_number(df, cycle_mode='chg'):
         cycle_mode = _id_first_state(df)
 
     # Set increment key and non-increment/off key
-    if cycle_mode.lower() == 'chg':
-        inkey = 'Chg'
-        offkey = 'DChg'
-    elif cycle_mode.lower() == 'dchg':
-        inkey = 'DChg'
-        offkey = 'Chg'
+    if cycle_mode.lower() == "chg":
+        inkeys = charge_keys
+        offkeys = discharge_keys + ["SIM"]
+    elif cycle_mode.lower() == "dchg":
+        inkeys = discharge_keys
+        offkeys = charge_keys + ["SIM"]
     else:
         logger.error(f"Cycle_Mode '{cycle_mode}' not recognized. Supported options are 'chg', 'dchg', and 'auto'.")
         raise KeyError(f"Cycle_Mode '{cycle_mode}' not recognized. Supported options are 'chg', 'dchg', and 'auto'.")
 
-    # Identify the beginning of key incremental steps
-    inc = (df['Status'] == 'CCCV_'+inkey) | (df['Status'] == 'CC_'+inkey) | (df['Status'] == 'CP_'+inkey)
-
-    # inc series = 1 at new incremental step, 0 otherwise
-    inc = (inc - inc.shift()).clip(0)
-    inc.iat[0] = 1
-
-    # Convert to numpy arrays
-    inc = inc.values
-    status = df['Status'].values
-
-    # Increment the cycle at a charge step after there has been a discharge, or vice versa
+    incs = df["Status"].isin(inkeys).to_numpy()
+    flags = df["Status"].isin(offkeys).to_numpy()
+    cycles = np.zeros_like(incs, dtype=int)
     cyc = 1
-    Flag = False
-    for n in range(len(inc)):
-        # Get Chg/DChg status
-        try:
-            method, state = status[n].split('_', 1)
-        except ValueError:
-            # Status is SIM or otherwise. Set Flag
-            Flag = True if status[n] == 'SIM' else Flag
-
-        else:
-            # Standard status type
-            if inc[n] & Flag:
-                # Increment the cycle number and reset flag when flag is active and the incremental step changes
-                cyc += 1
-                Flag = False
-            elif state == offkey:
-                Flag = True
-
-        finally:
-            inc[n] = cyc
-
-    return inc
+    flag = False
+    for i in range(len(incs)):
+        if not flag and flags[i]:
+            flag=True
+        elif flag and incs[i]:
+            cyc += 1
+            flag = False
+        cycles[i] = cyc
+    return cycles
 
 
 def _count_changes(series):
@@ -73,19 +55,10 @@ def _count_changes(series):
 
 def _id_first_state(df):
     """Helper function to identify the first non-rest state in a cycling profile"""
-    nonrest_states = df[df['Status'] != 'Rest']['Status']
+    mask = df["Status"].isin(charge_keys + discharge_keys)
+    # If there is chg/dchg and first state is chg, return "chg"
+    if mask.any() and df.loc[mask, "Status"].iloc[0] in charge_keys:
+        return "chg"
+    # If first state is dchg or if no chg/dchg, return "dchg"
+    return "dchg"
 
-    # If no non-rest cycles exist, just pick a mode; it doesn't matter.
-    if len(nonrest_states) > 0:
-        first_state = nonrest_states.iat[0]
-    else:
-        return 'chg'
-
-    try:
-        _, cycle_mode = first_state.split('_', 1)
-    except ValueError:
-        # Status is SIM or otherwise. Set mode to chg
-        logger.warning("First Step not recognized. Defaulting to Cycle_Mode 'Charge'.")
-        cycle_mode = 'chg'
-
-    return cycle_mode.lower()
