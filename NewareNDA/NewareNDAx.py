@@ -2,21 +2,29 @@
 # Author: Daniel Cogswell
 # Email: danielcogswell@ses.ai
 
-import sys
-import mmap
-import struct
 import logging
-import tempfile
-import zipfile
+import mmap
 import re
-import numpy as np
-from datetime import datetime
+import struct
+import sys
+import tempfile
 import xml.etree.ElementTree as ET
-import pandas as pd
+import zipfile
+from datetime import datetime
 
-from .utils import _generate_cycle_number, _count_changes
-from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
-    multiplier_dict
+import numpy as np
+import pandas as pd
+import polars as pl
+import tzlocal
+
+from .dicts import (
+    multiplier_dict,
+    pl_aux_dtype_dict,
+    pl_dtype_dict,
+    rec_columns,
+    state_dict,
+)
+from .utils import _count_changes, _generate_cycle_number
 
 logger = logging.getLogger('newarenda')
 
@@ -92,25 +100,33 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             step_df = read_ndc(step_file)
 
             # Merge dataframes
-            data_df = data_df.merge(runInfo_df, how='left', on='Index')
-            data_df['Step'] = data_df['Step'].ffill()
-            data_df = data_df.merge(step_df, how='left', on='Step')
+            data_df = data_df.join(runInfo_df, how='left', on='Index')
+            data_df = data_df.with_columns([
+                pl.col('Step').forward_fill(),  # Forward fill Step column
+            ])
+            data_df = data_df.join(step_df, how='left', on='Step')
 
             # Fill in missing data - Neware appears to fabricate data
-            if data_df.isnull().any(axis=None):
-                _data_interpolation(data_df)
+            if data_df["Time"].is_null().any():
+                data_df = _data_interpolation(data_df)
 
-            # Convert uts_s to timezone aware Timestamp
-            data_df["Timestamp"] = pd.to_datetime(data_df["uts"], unit="s", utc=True)
-            tz = datetime.now().astimezone().tzinfo
-            data_df["Timestamp"] = data_df["Timestamp"].dt.tz_convert(tz)
+            # Convert uts_s to timezone aware Timestamp and replace Status ints with strings
+            try:
+                tz = tzlocal.get_localzone_name()
+            except Exception:
+                logger.info("Could not get local timezone, using UTC.")
+                tz = "UTC"
+            data_df = data_df.with_columns([
+                pl.from_epoch(pl.col("uts"), time_unit="s").dt.convert_time_zone(tz).alias("Timestamp"),
+                pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
+                pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
+            ])
 
             # Keep only record columns
-            data_df = data_df.reindex(columns=rec_columns)
+            data_df = data_df.select(rec_columns)
 
 
         # Read and merge Aux data from ndc files
-        aux_df = pd.DataFrame([])
         for f in zf.namelist():
 
             # If the filename contains a channel number, convert to aux_id
@@ -126,23 +142,13 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             if m:
                 aux_file = zf.extract(f, path=tmpdir)
                 aux = read_ndc(aux_file)
-                aux['Aux'] = aux_id
-                aux_df = pd.concat([aux_df, aux], ignore_index=True)
-        if not aux_df.empty:
-            aux_df = aux_df.astype(
-                {k: aux_dtype_dict[k] for k in aux_dtype_dict.keys() & aux_df.columns})
-            pvt_df = aux_df.pivot(index='Index', columns='Aux')
-            pvt_df.columns = pvt_df.columns.map(lambda x: ''.join(map(str, x)))
-            data_df = data_df.join(pvt_df, on='Index')
+                aux.cast({k:v for k,v in pl_aux_dtype_dict.items() if k in aux.columns})
+                aux = aux.rename({col: f"{col}{aux_id}" for col in aux.columns if col not in ['Index']})
+                data_df.join(aux, how="left", on="Index")
 
-    if software_cycle_number:
-        data_df['Cycle'] = _generate_cycle_number(data_df, cycle_mode)
+    data_df = data_df.cast(pl_dtype_dict)
+    return data_df.to_pandas()
 
-    # Convert statuses to strings
-    if "Status" in data_df.columns:
-        data_df["Status"] = data_df["Status"].map(state_dict)
-
-    return data_df.astype(dtype=dtype_dict)
 
 
 def _data_interpolation(df):
@@ -150,48 +156,37 @@ def _data_interpolation(df):
     Some ndax from from BTS Server 8 do not seem to contain a complete dataset.
     This helper function fills in missing times, capacities, and energies.
     """
-
-    # Rows missing from runinfo
-    nan_mask = df["Time"].notna()
-
     # Get time by forward filling differences
-    df["dt"] = df["dt"].ffill()
-    cdt = df["dt"].ffill().groupby(nan_mask.cumsum().shift()).cumsum() * ~nan_mask
-    df["Time"] = df["Time"].ffill() + cdt
-    df["uts"] = df["uts"].ffill() + cdt
+    df = df.with_columns([
+        pl.col("Time").is_not_null().alias("nan_mask"),
+        pl.col("Time").is_not_null().cum_sum().shift(1).fill_null(0).alias("group_idx"),
+        pl.col("dt", "Time", "uts", "Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
+           "Charge_Energy(mWh)", "Discharge_Energy(mWh)").fill_null(strategy="forward"),
+    ])
 
-    # Integrate to get capacity and fill missing values
-    capacity = df['dt']*abs(df['Current(mA)'])/3600
-    inc = capacity.groupby(nan_mask.cumsum()).cumsum()
-    chg = df['Charge_Capacity(mAh)'].ffill() + \
-        inc.where(df['Current(mA)'] > 0, 0).shift()
-    dch = df['Discharge_Capacity(mAh)'].ffill() + \
-        inc.where(df['Current(mA)'] < 0, 0).shift()
-    df['Charge_Capacity(mAh)'] = df['Charge_Capacity(mAh)'].where(nan_mask, chg)
-    df['Discharge_Capacity(mAh)'] = df['Discharge_Capacity(mAh)'].where(nan_mask, dch)
+    df = df.with_columns([
+        (pl.col("dt").cum_sum().over("group_idx") * (~pl.col("nan_mask"))).alias("cdt"),
+        (pl.col("dt") * pl.col("Current(mA)") / 3600).cum_sum().over("group_idx").alias("capacity"),
+    ])
 
-    # Integrate to get energy and fill missing values
-    energy = capacity*df['Voltage']
-    inc = energy.groupby(nan_mask.cumsum()).cumsum()
-    chg = df['Charge_Energy(mWh)'].ffill() + \
-        inc.where(df['Current(mA)'] > 0, 0).shift()
-    dch = df['Discharge_Energy(mWh)'].ffill() + \
-        inc.where(df['Current(mA)'] < 0, 0).shift()
-    df['Charge_Energy(mWh)'] = df['Charge_Energy(mWh)'].where(nan_mask, chg)
-    df['Discharge_Energy(mWh)'] = df['Discharge_Energy(mWh)'].where(nan_mask, dch)
+    df = df.with_columns([
+        (pl.col("Time") + pl.col("cdt")).alias("Time"),
+        (pl.col("uts") + pl.col("cdt")).alias("uts"),
+        (pl.col("Charge_Capacity(mAh)") + pl.col("capacity").clip(lower_bound=0)).alias("Charge_Capacity(mAh)"),
+        (pl.col("Discharge_Capacity(mAh)") + pl.col("capacity").clip(upper_bound=0)).alias("Discharge_Capacity(mAh)"),
+        (pl.col("Charge_Energy(mWh)") + pl.col("capacity").clip(lower_bound=0) * pl.col("Voltage")).alias("Charge_Energy(mWh)"),
+        (pl.col("Discharge_Energy(mWh)") + pl.col("capacity").clip(upper_bound=0) * pl.col("Voltage")).alias("Discharge_Energy(mWh)"),
+    ])
 
     # Sanity checks
-    if any(df["uts"].diff() < 0):
+    if (df["uts"].diff() < 0).any():
         logger.warning(
             "IMPORTANT: This ndax has negative jumps in the 'Timestamp' column! "
             "This can sometimes happen in the ndax file itself. "
             "Use the 'Time' column for analysis.",
         )
-    if any(df.groupby("Step")["Time"].diff() < 0):
-        logger.warning(
-            "IMPORTANT: This ndax has negative jumps in the Time column! "
-            "There may be issues with read_ndc for this file type.",
-        )
+
+    return df
 
 
 def read_ndc(file):
@@ -210,7 +205,6 @@ def read_ndc(file):
             # Get ndc file version and filetype
             [ndc_filetype] = struct.unpack('<B', mm[0:1])
             [ndc_version] = struct.unpack('<B', mm[2:3])
-
             try:
                 f = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
                 return f(mm)
@@ -323,9 +317,9 @@ def _read_ndc_11_filetype_1(mm):
         ("Voltage", "<f4"),
         ("Current(mA)", "<f4"),
     ])
-    df = _read_ndc(mm, dtype, 132, 4)
-    df["Voltage"] *= 1e-4  # 0.1mV -> V
-    return df
+    return _read_ndc(mm, dtype, 132, 4).with_columns([
+        pl.col("Voltage") * 1e-4,  # 0.1mV -> V
+    ])
 
 
 def _read_ndc_11_filetype_5(mm):
@@ -336,9 +330,12 @@ def _read_ndc_11_filetype_5(mm):
             ("V", "<f4"),
             ("T", "<i2"),
         ])
-        df = _read_ndc(mm, dtype, 132, 2)
-        df["V"] *= 1e-4  # 0.1mV -> V
-        df["T"] *= 0.1 # 0.1'C -> 'C
+        return _read_ndc(mm, dtype, 132, 2).with_columns([
+            pl.col("V") * 1e-4,  # 0.1
+            pl.col("T") * 0.1,  # 0.1'C -> 'C
+            pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
+        ])
+
 
     elif mm[header+132:header+133] == b'\x74':
         dtype = np.dtype([
@@ -349,14 +346,12 @@ def _read_ndc_11_filetype_5(mm):
             ("T", "<i2"),
             ("_pad3", "V51"),
         ])
-        df = _read_ndc(mm, dtype, 132, 4)
-        df["T"] *= 0.1  # 0.1'C -> 'C
+        return _read_ndc(mm, dtype, 132, 4).with_columns([
+            pl.col("T") * 0.1,  # 0.1'C -> 'C
+        ])
 
-    else:
-        msg = "Unknown file structure for ndc version 11 filetype 5."
-        raise NotImplementedError(msg)
-
-    return df
+    msg = "Unknown file structure for ndc version 11 filetype 5."
+    raise NotImplementedError(msg)
 
 
 def _read_ndc_11_filetype_7(mm):
@@ -367,10 +362,10 @@ def _read_ndc_11_filetype_7(mm):
         ("Status", "<i1"),
         ("_pad2", "V12"),
     ])
-    df = _read_ndc(mm, dtype, 132, 5)
-    df["Cycle"] = df["Cycle"] + 1
-    df["Step"] = (df.index + 1).astype(np.int32)
-    return df
+    return _read_ndc(mm, dtype, 132, 5).with_columns([
+        pl.col("Cycle") + 1,
+        pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Step"),
+    ])
 
 
 def _read_ndc_11_filetype_18(mm):
@@ -388,16 +383,13 @@ def _read_ndc_11_filetype_18(mm):
         ("Index", "<i4"),
         ("uts_ms", "<i2"),
     ])
-    df = _read_ndc(mm, dtype, 132, 63)
-    df["Time"] /= 1000  # ms -> s
-    df["dt"] /= 1000  # ms -> s
-    df["Charge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Discharge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Charge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["Discharge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["uts"] = df["uts_s"] + df["uts_ms"] / 1000 # s
-    df['Step'] = _count_changes(df['Step'])
-    return df
+    return _read_ndc(mm, dtype, 132, 16).with_columns([
+        pl.col("Time", "dt") / 1000,  # ms -> s
+        pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
+            "Charge_Energy(mWh)", "Discharge_Energy(mWh)") / 3600, # mAs|mWs -> mAh|mWh
+        (pl.col("uts_s") + pl.col("uts_ms") / 1000).alias("uts"),
+        _count_changes(pl.col("Step")).alias("Step"),
+    ])
 
 
 def _read_ndc_14_filetype_1(mm):
@@ -405,15 +397,18 @@ def _read_ndc_14_filetype_1(mm):
         ("Voltage", "<f4"),
         ("Current(mA)", "<f4"),
     ])
-    df = _read_ndc(mm, dtype, 132, 4)
-    df["Current(mA)"] *= 1000  # A -> mA
-    return df
+    return _read_ndc(mm, dtype, 132, 4).with_columns([
+        pl.col("Current(mA)") * 1000,
+    ])
+
 
 def _read_ndc_14_filetype_5(mm):
     dtype = np.dtype([
         ("T", "<f4"),
     ])
-    return _read_ndc(mm, dtype, 132, 4)
+    return _read_ndc(mm, dtype, 132, 4).with_columns([
+        pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
+    ])
 
 
 def _read_ndc_14_filetype_7(mm):
@@ -424,9 +419,9 @@ def _read_ndc_14_filetype_7(mm):
         ("Status", "<i1"),
         ("_pad2", "V12"),
     ])
-    df = _read_ndc(mm, dtype, 132, 5)
-    df["Step"] = (df.index + 1).astype(np.int32)
-    return df
+    return _read_ndc(mm, dtype, 132, 5).with_columns([
+        pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Step"),
+    ])
 
 
 def _read_ndc_14_filetype_18(mm):
@@ -445,16 +440,13 @@ def _read_ndc_14_filetype_18(mm):
         ("uts_ms", "<i2"),
         ("_pad3",  "V8"),
     ])
-    df = _read_ndc(mm,dtype, 132, 4)
-    df["Time"] /= 1000  # ms -> s
-    df["dt"] /= 1000  # ms -> s
-    df["Charge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Discharge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Charge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["Discharge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["uts"] = df["uts_s"] + df["uts_ms"] / 1000 # s
-    df['Step'] = _count_changes(df['Step'])
-    return df
+    return _read_ndc(mm, dtype, 132, 4).with_columns([
+        pl.col("Time", "dt") / 1000,  # ms -> s
+        pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
+            "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000,  # Ah|Wh -> mAh|mWh
+        (pl.col("uts_s") + pl.col("uts_ms") / 1000).alias("uts"),
+        pl.col("Step").diff().fill_null(1).abs().gt(0).cum_sum().alias("Step"),
+    ])
 
 
 def _read_ndc_17_filetype_1(mm):
@@ -471,10 +463,11 @@ def _read_ndc_17_filetype_7(mm):
         ("Step_Index", "<i4"),
         ("_pad3", "V63"),
     ])
-    df = _read_ndc(mm, dtype, 132, 64)
-    df["Cycle"] = df["Cycle"] + 1
-    df["Step"] = _count_changes(df["Step"])
-    return df
+    return _read_ndc(mm, dtype, 132, 64).with_columns([
+        pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Cycle"),
+        _count_changes(pl.col("Step")).alias("Step"),
+    ])
+
 
 def _read_ndc_17_filetype_18(mm):
     dtype = np.dtype([
@@ -492,15 +485,12 @@ def _read_ndc_17_filetype_18(mm):
         ("uts_ms", "<i2"),
         ("_pad3",  "V53"),
     ])
-    df = _read_ndc(mm,dtype, 132, 64)
-    df["Time"] /= 1000  # ms -> s
-    df["dt"] /= 1000  # ms -> s
-    df["Charge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Discharge_Capacity(mAh)"] *= 1000  # Ah -> mAh
-    df["Charge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["Discharge_Energy(mWh)"] *= 1000  # Wh -> mWh
-    df["uts"] = df["uts_s"] + df["uts_ms"] / 1000 # s
-    return df
+    return _read_ndc(mm,dtype, 132, 64).with_columns([
+        pl.col("Time", "dt") / 1000,
+        pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
+            "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000,
+        (pl.col("uts_s") + pl.col("uts_ms") / 1000).alias("uts"),
+    ])
 
 def _read_ndc(
     mm: mmap.mmap,
@@ -523,14 +513,17 @@ def _read_ndc(
     arr = arr.reshape(-1)
     if "Index" in arr.dtype.names:  # Remove 0 index rows for runInfo/step files
         arr = arr[arr["Index"] != 0]
-        df = pd.DataFrame(arr)
-    elif "Step_Index" in arr.dtype.names:  # Remove 0 step rows for step files
+        return pl.DataFrame(arr)
+    if "Step_Index" in arr.dtype.names:  # Remove 0 step rows for step files
         arr = arr[arr["Step_Index"] != 0]
-        df = pd.DataFrame(arr)
-    else:  # Add index column for data files
-        df = pd.DataFrame(arr)
-        df["Index"] = (np.arange(len(df)) + 1).astype('int32')
-    return df
+        return pl.DataFrame(arr)
+    if "Voltage" in arr.dtype.names:  # Add index column for data files
+        arr = arr[arr["Voltage"] != 0]
+        return pl.DataFrame(arr).with_columns([
+            pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
+        ])
+    return pl.DataFrame(arr)
+
 
 
 def _bytes_to_list_ndc(bytes):
