@@ -64,6 +64,7 @@ aux_dtype_dict = {
 }
 
 pl_aux_dtype_dict = {
+    'Index': pl.UInt32,
     'V': pl.Float32,
     'T': pl.Float32,
     't': pl.Float32,
