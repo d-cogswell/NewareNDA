@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 from .dicts import state_dict
+import polars as pl
 
 logger = logging.getLogger('newarenda')
 
@@ -23,20 +24,20 @@ def _generate_cycle_number(df, cycle_mode='chg'):
     # Set increment key and non-increment/off key
     if cycle_mode.lower() == "chg":
         inkeys = charge_keys
-        offkeys = discharge_keys + ["SIM"]
+        offkeys = discharge_keys + [17]
     elif cycle_mode.lower() == "dchg":
         inkeys = discharge_keys
-        offkeys = charge_keys + ["SIM"]
+        offkeys = charge_keys + [17]
     else:
         logger.error(f"Cycle_Mode '{cycle_mode}' not recognized. Supported options are 'chg', 'dchg', and 'auto'.")
         raise KeyError(f"Cycle_Mode '{cycle_mode}' not recognized. Supported options are 'chg', 'dchg', and 'auto'.")
 
-    incs = df["Status"].isin(inkeys).to_numpy()
-    flags = df["Status"].isin(offkeys).to_numpy()
-    cycles = np.zeros_like(incs, dtype=int)
+    incs = df["Status"].is_in(inkeys).to_numpy()
+    flags = df["Status"].is_in(offkeys).to_numpy()
+    cycles = np.zeros(len(df), dtype=int)
     cyc = 1
     flag = False
-    for i in range(len(incs)):
+    for i in range(len(df)):
         if not flag and flags[i]:
             flag=True
         elif flag and incs[i]:
@@ -48,16 +49,15 @@ def _generate_cycle_number(df, cycle_mode='chg'):
 
 def _count_changes(series):
     """Enumerate the number of value changes in a series"""
-    a = series.diff()
-    a.iloc[0] = 1
-    return (abs(a) > 0).cumsum()
+    return series.diff().fill_null(1).abs().gt(0).cum_sum()
+
 
 
 def _id_first_state(df):
     """Helper function to identify the first non-rest state in a cycling profile"""
-    mask = df["Status"].isin(charge_keys + discharge_keys)
+    mask = df["Status"].is_in(charge_keys + discharge_keys)
     # If there is chg/dchg and first state is chg, return "chg"
-    if mask.any() and df.loc[mask, "Status"].iloc[0] in charge_keys:
+    if mask.any() and df["Status"][mask.arg_min()] in charge_keys:
         return "chg"
     # If first state is dchg or if no chg/dchg, return "dchg"
     return "dchg"
