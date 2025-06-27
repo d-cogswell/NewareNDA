@@ -1,29 +1,10 @@
+import polars as pl
+
 # Names for data fields
 rec_columns = [
     'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
     'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
     'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp']
-
-# Define precision of fields
-dtype_dict = {
-    'Index': 'uint32',
-    'Cycle': 'uint16',
-    'Step': 'uint32',
-    'Status': 'category',
-    'Time': 'float32',
-    'Voltage': 'float32',
-    'Current(mA)': 'float32',
-    'Charge_Capacity(mAh)': 'float32',
-    'Discharge_Capacity(mAh)': 'float32',
-    'Charge_Energy(mWh)': 'float32',
-    'Discharge_Energy(mWh)': 'float32'
-}
-
-aux_dtype_dict = {
-    'V': 'float32',
-    'T': 'float32',
-    't': 'float32'
-}
 
 # Dictionary mapping Status integer to string
 state_dict = {
@@ -46,6 +27,48 @@ state_dict = {
     26: 'CPCV_DChg',
     27: 'CPCV_Chg'
 }
+
+# Define precision of fields
+dtype_dict = {
+    'Index': 'uint32',
+    'Cycle': 'uint16',
+    'Step': 'uint32',
+    'Status': 'category',
+    'Time': 'float32',
+    'Voltage': 'float32',
+    'Current(mA)': 'float32',
+    'Charge_Capacity(mAh)': 'float32',
+    'Discharge_Capacity(mAh)': 'float32',
+    'Charge_Energy(mWh)': 'float32',
+    'Discharge_Energy(mWh)': 'float32'
+}
+
+pl_dtype_dict = {
+    'Index': pl.UInt32,
+    'Cycle': pl.UInt32,
+    'Step': pl.UInt32,
+    'Status': pl.Enum(state_dict.values()),
+    'Time': pl.Float32,
+    'Voltage': pl.Float32,
+    'Current(mA)': pl.Float32,
+    'Charge_Capacity(mAh)': pl.Float32,
+    'Discharge_Capacity(mAh)': pl.Float32,
+    'Charge_Energy(mWh)': pl.Float32,
+    'Discharge_Energy(mWh)': pl.Float32,
+}
+
+aux_dtype_dict = {
+    'V': 'float32',
+    'T': 'float32',
+    't': 'float32'
+}
+
+pl_aux_dtype_dict = {
+    'V': pl.Float32,
+    'T': pl.Float32,
+    't': pl.Float32,
+}
+
 
 # Define field scaling based on instrument Range setting
 multiplier_dict = {
