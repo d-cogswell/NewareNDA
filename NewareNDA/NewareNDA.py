@@ -136,54 +136,112 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
 
 def _read_nda_8(mm):
-    """nda 版本 8 的辅助函数 (暂时与版本 22 相同)"""
+    """nda 版本 8 的辅助函数。
+
+    与后续版本结构差异较大，其记录长度仅 59 B，
+    但仍以 0x55 0x00 开头，无显式页眉标识。此处使用以下经验解析：
+
+    字节偏移（基于经验文件）：
+    0–1   : 0x55 0x00 固定帧头
+    2–5   : Index (uint32)
+    10    : Step (uint8)
+    18    : Status (uint8)
+    20–23 : Current (int32, μA)
+    24–27 : Voltage (int32, 1e-4 V)
+    其余字段留空或暂未解析。
+    """
+
     mm_size = mm.size()
 
-    # 获取活性物质质量
-    [active_mass] = struct.unpack('<I', mm[152:156])
-    logger.info(f"Active mass: {active_mass/1000} mg")
+    # 活性物质质量与备注区在旧版文件中不存在或无法可靠读取，此处跳过。
 
-    try:
-        remarks = mm[2317:2417].decode('ASCII')
-        # 清除空字符
-        remarks = remarks.replace(chr(0), '').strip()
-        logger.info(f"Remarks: {remarks}")
-    except UnicodeDecodeError:
-        logger.warning("将备注字节转换为 ASCII 失败")
-        remarks = ""
+    record_len = 59
 
-    # 识别数据部分的开头
-    record_len = 86
-    identifier = b'\x00\x00\x00\x00\x55\x00'
-    header = mm.find(identifier)
+    # 在文件任意位置搜索第一个 0x55 0x00 作为起始记录。
+    header = -1
+    search_pos = 0
+    while True:
+        cand = mm.find(b'\x55\x00', search_pos)
+        if cand == -1 or cand + record_len >= mm_size:
+            break
+        # 检查下一条 0x55 0x00 是否正好相隔 59 字节
+        if mm[cand + record_len: cand + record_len + 2] == b'\x55\x00':
+            header = cand
+            break
+        search_pos = cand + 1
+
     if header == -1:
-        logger.error("File does not contain any valid records.")
+        logger.error("未找到满足 59 B 间隔模式的记录头，无法解析 nda v8 文件！")
         raise EOFError("File does not contain any valid records.")
-    while (((mm[header + 4 + record_len] != 85)
-            | (not _valid_record(mm[header+4:header+4+record_len])))
-            if header + 4 + record_len < mm_size
-            else False):
-        header = mm.find(identifier, header + 4)
-    mm.seek(header + 4)
 
-    # 读取数据记录
+    mm.seek(header)
+
     output = []
+    idx = 1  # 自增索引作为 Index 的后备方案
+    while mm.tell() + record_len <= mm_size:
+        chunk = mm.read(record_len)
+
+        # 记录必须以 0x55 0x00 开头
+        if chunk[0:2] != b'\x55\x00':
+            break
+
+        rec = _bytes_to_list_8(chunk, fallback_index=idx)
+        if rec:
+            output.append(rec)
+        idx += 1
+
+    # v8 暂未发现辅助温度记录
     aux = []
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        if len(bytes) == record_len:
-
-            # 检查数据记录
-            if (bytes[0:2] == b'\x55\x00'
-                    and bytes[82:87] == b'\x00\x00\x00\x00'):
-                output.append(_bytes_to_list_22(bytes))
-
-            # 检查辅助记录
-            elif (bytes[0:1] == b'\x65'
-                    and bytes[82:87] == b'\x00\x00\x00\x00'):
-                aux.append(_aux_bytes_to_list(bytes))
-
     return output, aux
+
+
+def _bytes_to_list_8(bytes, fallback_index=0):
+    """解析 nda v8 版 59 B 数据记录，返回符合 rec_columns 的列表。"""
+
+    # Index（若字段为 0，则使用回退索引）
+    Index = struct.unpack('<I', bytes[2:6])[0] or fallback_index
+
+    Step = bytes[10]
+    Status_code = bytes[18]
+
+    Current_raw = struct.unpack('<i', bytes[20:24])[0]  # 单位 μA（推测）
+    Voltage_raw = struct.unpack('<i', bytes[24:28])[0]  # 单位 1e-4 V
+
+    # 旧版文件缺少时间 / 容量 / 能量，可留零占位
+    Time = 0.0
+    Charge_capacity = Discharge_capacity = 0.0
+    Charge_energy = Discharge_energy = 0.0
+
+    # 根据电流正负判断充/放电，暂不修改容量能量字段
+
+    # 转换电压、电流
+    Voltage = Voltage_raw / 10000
+    # 量程未知，直接使用以 mA 为单位（μA *1e-3）
+    Current = Current_raw / 1000
+
+    # v8 文件可能仅包含单循环
+    Cycle = 1
+
+    # 生成时间戳占位（None）
+    timestamp = None
+
+    # 状态映射，不在字典范围时使用 Unknown
+    Status = state_dict.get(Status_code, f'Unknown_{Status_code}')
+
+    return [
+        Index,
+        Cycle,
+        Step,
+        Status,
+        Time,
+        Voltage,
+        Current,
+        Charge_capacity,
+        Discharge_capacity,
+        Charge_energy,
+        Discharge_energy,
+        timestamp
+    ]
 
 
 def _read_nda_22(mm):
