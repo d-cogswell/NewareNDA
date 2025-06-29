@@ -93,7 +93,13 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             logger.info("未找到 BTS 版本！")
 
         # 版本特定设置
-        if nda_version == 29:
+        if nda_version == 8:
+            output, aux = _read_nda_8(mm)
+        elif nda_version == 22:
+            output, aux = _read_nda_22(mm)
+        elif nda_version == 26:
+            output, aux = _read_nda_26(mm)
+        elif nda_version == 29:
             output, aux = _read_nda_29(mm)
         elif nda_version == 130:
             output, aux = _read_nda_130(mm)
@@ -127,6 +133,159 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
     df = df.astype(dtype=dtype_dict)
 
     return df
+
+
+def _read_nda_8(mm):
+    """nda 版本 8 的辅助函数 (暂时与版本 29 相同)"""
+    mm_size = mm.size()
+
+    # 获取活性物质质量
+    [active_mass] = struct.unpack('<I', mm[152:156])
+    logger.info(f"Active mass: {active_mass/1000} mg")
+
+    try:
+        remarks = mm[2317:2417].decode('ASCII')
+        # 清除空字符
+        remarks = remarks.replace(chr(0), '').strip()
+        logger.info(f"Remarks: {remarks}")
+    except UnicodeDecodeError:
+        logger.warning("将备注字节转换为 ASCII 失败")
+        remarks = ""
+
+    # 识别数据部分的开头
+    record_len = 86
+    identifier = b'\x00\x00\x00\x00\x55\x00'
+    header = mm.find(identifier)
+    if header == -1:
+        logger.error("File does not contain any valid records.")
+        raise EOFError("File does not contain any valid records.")
+    while (((mm[header + 4 + record_len] != 85)
+            | (not _valid_record(mm[header+4:header+4+record_len])))
+            if header + 4 + record_len < mm_size
+            else False):
+        header = mm.find(identifier, header + 4)
+    mm.seek(header + 4)
+
+    # 读取数据记录
+    output = []
+    aux = []
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        if len(bytes) == record_len:
+
+            # 检查数据记录
+            if (bytes[0:2] == b'\x55\x00'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                output.append(_bytes_to_list(bytes))
+
+            # 检查辅助记录
+            elif (bytes[0:1] == b'\x65'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                aux.append(_aux_bytes_to_list(bytes))
+
+    return output, aux
+
+
+def _read_nda_22(mm):
+    """nda 版本 22 的辅助函数 (暂时与版本 29 相同)"""
+    mm_size = mm.size()
+
+    # 获取活性物质质量
+    [active_mass] = struct.unpack('<I', mm[152:156])
+    logger.info(f"Active mass: {active_mass/1000} mg")
+
+    try:
+        remarks = mm[2317:2417].decode('ASCII')
+        # 清除空字符
+        remarks = remarks.replace(chr(0), '').strip()
+        logger.info(f"Remarks: {remarks}")
+    except UnicodeDecodeError:
+        logger.warning("将备注字节转换为 ASCII 失败")
+        remarks = ""
+
+    # 识别数据部分的开头
+    record_len = 86
+    identifier = b'\x00\x00\x00\x00\x55\x00'
+    header = mm.find(identifier)
+    if header == -1:
+        logger.error("File does not contain any valid records.")
+        raise EOFError("File does not contain any valid records.")
+    while (((mm[header + 4 + record_len] != 85)
+            | (not _valid_record(mm[header+4:header+4+record_len])))
+            if header + 4 + record_len < mm_size
+            else False):
+        header = mm.find(identifier, header + 4)
+    mm.seek(header + 4)
+
+    # 读取数据记录
+    output = []
+    aux = []
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        if len(bytes) == record_len:
+
+            # 检查数据记录
+            if (bytes[0:2] == b'\x55\x00'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                output.append(_bytes_to_list(bytes))
+
+            # 检查辅助记录
+            elif (bytes[0:1] == b'\x65'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                aux.append(_aux_bytes_to_list(bytes))
+
+    return output, aux
+
+
+def _read_nda_26(mm):
+    """nda 版本 26 的辅助函数"""
+    mm_size = mm.size()
+
+    # 获取活性物质质量
+    [active_mass] = struct.unpack('<I', mm[152:156])
+    logger.info(f"Active mass: {active_mass/1000} mg")
+
+    try:
+        remarks = mm[2317:2417].decode('ASCII')
+        # 清除空字符
+        remarks = remarks.replace(chr(0), '').strip()
+        logger.info(f"Remarks: {remarks}")
+    except UnicodeDecodeError:
+        logger.warning("将备注字节转换为 ASCII 失败")
+        remarks = ""
+
+    # 识别数据部分的开头
+    record_len = 86
+    identifier = b'\x00\x00\x00\x00\x55\x00'
+    header = mm.find(identifier)
+    if header == -1:
+        logger.error("File does not contain any valid records.")
+        raise EOFError("File does not contain any valid records.")
+    while (((mm[header + 4 + record_len] != 85)
+            | (not _valid_record(mm[header+4:header+4+record_len])))
+            if header + 4 + record_len < mm_size
+            else False):
+        header = mm.find(identifier, header + 4)
+    mm.seek(header + 4)
+
+    # 读取数据记录
+    output = []
+    aux = []
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        if len(bytes) == record_len:
+
+            # 检查数据记录
+            if (bytes[0:2] == b'\x55\x00'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                output.append(_bytes_to_list(bytes))
+
+            # 检查辅助记录
+            elif (bytes[0:1] == b'\x65'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                aux.append(_aux_bytes_to_list(bytes))
+
+    return output, aux
 
 
 def _read_nda_29(mm):
