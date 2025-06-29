@@ -1,6 +1,6 @@
-# © 2022-2024 Copyright SES AI
-# Author: Daniel Cogswell
-# Email: danielcogswell@ses.ai
+# © 2022-2024 版权所有 SES AI
+# 作者：Daniel Cogswell
+# 邮箱：danielcogswell@ses.ai
 
 import os
 import mmap
@@ -19,23 +19,23 @@ logger = logging.getLogger('newarenda')
 
 def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
     """
-    Read electrochemical data from an Neware nda or ndax binary file.
+    从 Neware nda 或 ndax 二进制文件中读取电化学数据。
 
-    Args:
-        file (str): Name of an .nda or .ndax file to read
-        software_cycle_number (bool): Regenerate the cycle number to match
-            Neware's "Charge First" circular statistic setting
-        cycle_mode (str): Selects how the cycle is incremented.
-            'chg': (Default) Sets new cycles with a Charge step following a Discharge.
-            'dchg': Sets new cycles with a Discharge step following a Charge.
-            'auto': Identifies the first non-rest state as the incremental state.
-        log_level (str): Sets the modules logging level. Default: 'INFO'
-            Options: 'CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'
-    Returns:
-        df (pd.DataFrame): DataFrame containing all records in the file
+    参数：
+        file (str)：要读取的 .nda 或 .ndax 文件名
+        software_cycle_number (bool)：重新生成循环编号以匹配
+            Neware 的"充电优先"循环统计设置
+        cycle_mode (str)：选择循环递增方式。
+            'chg': (默认) 在放电后以充电步骤设置新循环。
+            'dchg': 在充电后以放电步骤设置新循环。
+            'auto': 将第一个非静置状态识别为递增状态。
+        log_level (str)：设置模块的日志级别。默认值："INFO"
+            选项："CRITICAL"、"ERROR"、"WARNING"、"INFO"、"DEBUG"、"NOTSET"
+    返回：
+        df (pd.DataFrame)：包含文件中所有记录的 DataFrame
     """
 
-    # Set up logging
+    # 设置日志
     log_level = log_level.upper()
     if log_level in logging._nameToLevel.keys():
         logger.setLevel(log_level)
@@ -43,7 +43,7 @@ def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
         logger.warning(f"Logging level '{log_level}' not supported; Defaulting to 'INFO'. "
                        f"Supported options are: {', '.join(logging._nameToLevel.keys())}")
 
-    # Identify file type and process accordingly
+    # 识别文件类型并相应处理
     _, ext = os.path.splitext(file)
     if ext == '.nda':
         return read_nda(file, software_cycle_number, cycle_mode)
@@ -56,18 +56,18 @@ def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
 
 def read_nda(file, software_cycle_number, cycle_mode='chg'):
     """
-    Function read electrochemical data from a Neware nda binary file.
+    从 Neware nda 二进制文件中读取电化学数据的函数。
 
-    Args:
-        file (str): Name of a .nda file to read
-        software_cycle_number (bool): Generate the cycle number field
-            to match old versions of BTSDA
-        cycle_mode (str): Selects how the cycle is incremented.
-            'chg': (Default) Sets new cycles with a Charge step following a Discharge.
-            'dchg': Sets new cycles with a Discharge step following a Charge.
-            'auto': Identifies the first non-rest state as the incremental state.
-    Returns:
-        df (pd.DataFrame): DataFrame containing all records in the file
+    参数：
+        file (str)：要读取的 .nda 文件名
+        software_cycle_number (bool)：生成循环编号字段以匹配
+            旧版本的 BTSDA
+        cycle_mode (str)：选择循环递增方式。
+            'chg': (默认) 在放电后以充电步骤设置新循环。
+            'dchg': 在充电后以放电步骤设置新循环。
+            'auto': 将第一个非静置状态识别为递增状态。
+    返回：
+        df (pd.DataFrame)：包含文件中所有记录的 DataFrame
     """
     with open(file, "rb") as f:
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
@@ -76,11 +76,11 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             logger.error(f"{file} does not appear to be a Neware file.")
             raise ValueError(f"{file} does not appear to be a Neware file.")
 
-        # Get the file version
+        # 获取文件版本
         [nda_version] = struct.unpack('<B', mm[14:15])
         logger.info(f"NDA version: {nda_version}")
 
-        # Try to find server and client version info
+        # 尝试查找服务器和客户端版本信息
         version_loc = mm.find(b'BTSServer')
         if version_loc != -1:
             mm.seek(version_loc)
@@ -90,18 +90,18 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             client = mm.read(50).strip(b'\x00').decode()
             logger.info(f"Client: {client}")
         else:
-            logger.info("BTS version not found!")
+            logger.info("未找到 BTS 版本！")
 
-        # version specific settings
+        # 版本特定设置
         if nda_version == 29:
             output, aux = _read_nda_29(mm)
         elif nda_version == 130:
             output, aux = _read_nda_130(mm)
         else:
-            logger.error(f"nda version {nda_version} is not yet supported!")
-            raise NotImplementedError(f"nda version {nda_version} is not yet supported!")
+            logger.error(f"不支持 nda 版本 {nda_version}！")
+            raise NotImplementedError(f"不支持 nda 版本 {nda_version}！")
 
-    # Create DataFrame and sort by Index
+    # 创建 DataFrame 并按索引排序
     df = pd.DataFrame(output, columns=rec_columns)
     df.drop_duplicates(subset='Index', inplace=True)
 
@@ -110,7 +110,7 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
     df.reset_index(drop=True, inplace=True)
 
-    # Join temperature data
+    # 连接温度数据
     aux_df = pd.DataFrame(aux, columns=['Index', 'Aux', 'T', 'V'])
     aux_df.drop_duplicates(inplace=True)
     if not aux_df.empty:
@@ -120,7 +120,7 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
         pvt_df.columns = pvt_df.columns.map(lambda x: ''.join(map(str, x)))
         df = df.join(pvt_df, on='Index')
 
-    # Postprocessing
+    # 后处理
     df['Step'] = _count_changes(df['Step'])
     if software_cycle_number:
         df['Cycle'] = _generate_cycle_number(df, cycle_mode)
@@ -130,23 +130,23 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
 
 def _read_nda_29(mm):
-    """Helper function for nda version 29"""
+    """nda 版本 29 的辅助函数"""
     mm_size = mm.size()
 
-    # Get the active mass
+    # 获取活性物质质量
     [active_mass] = struct.unpack('<I', mm[152:156])
     logger.info(f"Active mass: {active_mass/1000} mg")
 
     try:
         remarks = mm[2317:2417].decode('ASCII')
-        # Clean null characters
+        # 清除空字符
         remarks = remarks.replace(chr(0), '').strip()
         logger.info(f"Remarks: {remarks}")
     except UnicodeDecodeError:
-        logger.warning("Converting remark bytes into ASCII failed")
+        logger.warning("将备注字节转换为 ASCII 失败")
         remarks = ""
 
-    # Identify the beginning of the data section
+    # 识别数据部分的开头
     record_len = 86
     identifier = b'\x00\x00\x00\x00\x55\x00'
     header = mm.find(identifier)
@@ -160,19 +160,19 @@ def _read_nda_29(mm):
         header = mm.find(identifier, header + 4)
     mm.seek(header + 4)
 
-    # Read data records
+    # 读取数据记录
     output = []
     aux = []
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
         if len(bytes) == record_len:
 
-            # Check for a data record
+            # 检查数据记录
             if (bytes[0:2] == b'\x55\x00'
                     and bytes[82:87] == b'\x00\x00\x00\x00'):
                 output.append(_bytes_to_list(bytes))
 
-            # Check for an auxiliary record
+            # 检查辅助记录
             elif (bytes[0:1] == b'\x65'
                     and bytes[82:87] == b'\x00\x00\x00\x00'):
                 aux.append(_aux_bytes_to_list(bytes))
@@ -181,10 +181,10 @@ def _read_nda_29(mm):
 
 
 def _read_nda_130(mm):
-    """Helper function for nda version 130"""
+    """nda 版本 130 的辅助函数"""
     mm_size = mm.size()
 
-    # Identify the beginning of the data section
+    # 识别数据部分的开头
     record_len = 88
     identifier = mm[1024:1030]
     if mm[1024:1025] == b'\x55':  # BTS 9.1
@@ -192,14 +192,14 @@ def _read_nda_130(mm):
         record_len = mm.find(mm[1024:1026], 1026) - 1024
     mm.seek(1024)
 
-    # Read data records
+    # 读取数据记录
     output = []
     aux = []
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
         if len(bytes) == record_len:
 
-            # Check for a data record
+            # 检查数据记录
             if bytes[0:1] == b'\x55':
                 output.append(_bytes_to_list_BTS91(bytes))
                 if record_len == 56:
@@ -207,27 +207,27 @@ def _read_nda_130(mm):
             elif bytes[0:6] == identifier:
                 output.append(_bytes_to_list_BTS9(bytes[4:]))
 
-            # Check for an auxiliary record
+            # 检查辅助记录
             elif bytes[0:5] == b'\x00\x00\x00\x00\x65':
                 aux.append(_aux_bytes_to_list(bytes[4:]))
 
             elif bytes[0:1] == b'\x81':
                 break
 
-    # Find footer data block
+    # 查找页脚数据块
     footer = mm.rfind(b'\x06\x00\xf0\x1d\x81\x00\x03\x00\x61\x90\x71\x90\x02\x7f\xff\x00', 1024)
     if footer != -1:
         mm.seek(footer+16)
         bytes = mm.read(499)
 
-        # Get the active mass
+        # 获取活性物质质量
         [active_mass] = struct.unpack('<d', bytes[-8:])
         logger.info(f"Active mass: {active_mass} mg")
 
-        # Get the remarks
+        # 获取备注
         remarks = bytes[363:491].decode('ASCII')
 
-        # Clean null characters
+        # 清除空字符
         remarks = remarks.replace(chr(0), '').strip()
         logger.info(f"Remarks: {remarks}")
 
@@ -235,16 +235,16 @@ def _read_nda_130(mm):
 
 
 def _valid_record(bytes):
-    """Helper function to identify a valid record"""
-    # Check for a non-zero Status
+    """识别有效记录的辅助函数"""
+    # 检查非零状态
     [Status] = struct.unpack('<B', bytes[12:13])
     return (Status != 0)
 
 
 def _bytes_to_list(bytes):
-    """Helper function for interpreting a byte string"""
+    """解释字节字符串的辅助函数"""
 
-    # Extract fields from byte string
+    # 从字节字符串中提取字段
     [Index, Cycle, Step] = struct.unpack('<III', bytes[2:14])
     [Status, Jump, Time, Voltage, Current] = struct.unpack('<BBQii', bytes[12:30])
     [Charge_capacity, Discharge_capacity,
@@ -252,13 +252,13 @@ def _bytes_to_list(bytes):
     [Y, M, D, h, m, s] = struct.unpack('<HBBBBB', bytes[70:77])
     [Range] = struct.unpack('<i', bytes[78:82])
 
-    # Index and should not be zero
+    # 索引不应为零
     if Index == 0 or Status == 0:
         return []
 
     multiplier = multiplier_dict[Range]
 
-    # Create a dictionary for the record
+    # 为记录创建字典
     list = [
         Index,
         Cycle + 1,
@@ -277,7 +277,7 @@ def _bytes_to_list(bytes):
 
 
 def _bytes_to_list_BTS9(bytes):
-    """Helper function to interpret byte strings from BTS9"""
+    """解释 BTS9 字节字符串的辅助函数"""
     [Step, Status] = struct.unpack('<BB', bytes[5:7])
     [Index] = struct.unpack('<I', bytes[12:16])
     [Time, Voltage, Current] = struct.unpack('<Qff', bytes[24:40])
@@ -285,7 +285,7 @@ def _bytes_to_list_BTS9(bytes):
      Discharge_Capacity, Discharge_Energy,
      Date] = struct.unpack('<ffffQ', bytes[48:72])
 
-    # Create a dictionary for the record
+    # 为记录创建字典
     list = [
         Index,
         0,
@@ -304,19 +304,19 @@ def _bytes_to_list_BTS9(bytes):
 
 
 def _bytes_to_list_BTS91(bytes):
-    """Helper function to interpret byte strings from BTS9.1"""
+    """解释 BTS9.1 字节字符串的辅助函数"""
     [Step, Status] = struct.unpack('<BB', bytes[2:4])
     [Index, Time, Time_ns] = struct.unpack('<III', bytes[8:20])
     [Current, Voltage, Capacity, Energy] = struct.unpack('<ffff', bytes[20:36])
     [Date, Date_ns] = struct.unpack('<II', bytes[44:52])
 
-    # Convert capacity and energy to charge and discharge fields
+    # 将容量和能量转换为充电和放电字段
     Charge_Capacity = 0 if Capacity < 0 else Capacity
     Discharge_Capacity = 0 if Capacity > 0 else abs(Capacity)
     Charge_Energy = 0 if Energy < 0 else Energy
     Discharge_Energy = 0 if Energy > 0 else abs(Energy)
 
-    # Create a dictionary for the record
+    # 为记录创建字典
     list = [
         Index,
         0,
@@ -335,7 +335,7 @@ def _bytes_to_list_BTS91(bytes):
 
 
 def _aux_bytes_to_list(bytes):
-    """Helper function for intepreting auxiliary records"""
+    """解释辅助记录的辅助函数"""
     [Aux, Index] = struct.unpack('<BI', bytes[1:6])
     [V] = struct.unpack('<i', bytes[22:26])
     [T] = struct.unpack('<h', bytes[34:36])
