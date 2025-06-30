@@ -13,7 +13,8 @@ import NewareNDA as nda
 # "tests/v_8_22_26/nda/nda_v8.nda" version 8
 # "tests/v_8_22_26/nda/nda_v22.nda" version 22  
 # "tests/v_8_22_26/nda/nda_v26.nda" version 26
-PATH = "tests/v_8_22_26/nda/nda_v26.nda"  # 使用版本 8 的文件
+# "tests/v_8_22_26/nda/nda_v28.nda" version 28
+PATH = "tests/v_8_22_26/nda/nda_v28.nda"  # 使用版本 28 的文件
 print(f"正在读取文件: {PATH}")
 dataTable = nda.read(PATH)
 print("数据读取成功！")

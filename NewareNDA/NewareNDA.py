@@ -97,8 +97,12 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             output, aux = _read_nda_8(mm)
         elif nda_version == 22:
             output, aux = _read_nda_22(mm)
+        elif nda_version == 23:
+            output, aux = _read_nda_22(mm)
         elif nda_version == 26:
             output, aux = _read_nda_26(mm)
+        elif nda_version == 28:
+            output, aux = _read_nda_29(mm)
         elif nda_version == 29:
             output, aux = _read_nda_29(mm)
         elif nda_version == 130:
