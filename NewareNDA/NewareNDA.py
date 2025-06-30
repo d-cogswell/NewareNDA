@@ -206,6 +206,15 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
         df['Cycle'] = _generate_cycle_number(df, cycle_mode)
     df = df.astype(dtype=dtype_dict)
 
+    # 按照要求，统一输出指定的列
+    desired_columns = [
+        'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
+        'Current(mA)', 'Timestamp'
+    ]
+    # 过滤掉不存在于 df 中的列
+    existing_columns = [col for col in desired_columns if col in df.columns]
+    df = df[existing_columns]
+
     return df, nda_version
 
 

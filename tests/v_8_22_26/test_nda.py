@@ -14,7 +14,7 @@ import NewareNDA as nda
 # "tests/v_8_22_26/nda/nda_v22.nda" version 22  
 # "tests/v_8_22_26/nda/nda_v26.nda" version 26
 # "tests/v_8_22_26/nda/nda_v28.nda" version 28
-PATH = "tests/v_8_22_26/nda/nda_v23.nda"
+PATH = "tests/v_8_22_26/nda/nda_v28.nda"
 print(f"正在读取文件: {PATH}")
 dataTable, nda_version = nda.read(PATH)
 print("数据读取成功！")
