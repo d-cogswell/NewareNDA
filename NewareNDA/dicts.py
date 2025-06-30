@@ -73,7 +73,7 @@ pl_aux_dtype_dict = {
 
 # Define field scaling based on instrument Range setting
 multiplier_dict = {
-    -100000000: 10,
+    -100000000: 1e1,
     -200000: 1e-2,
     -100000: 1e-2,
     -60000: 1e-2,
@@ -97,7 +97,7 @@ multiplier_dict = {
     -5: 1e-5,
     -2: 1e-5,
     -1: 1e-5,
-    0: 0,
+    0: 0.0,
     1: 1e-4,
     2: 1e-4,
     5: 1e-4,
