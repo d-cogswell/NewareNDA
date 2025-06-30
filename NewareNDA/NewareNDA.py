@@ -2,17 +2,19 @@
 # Author: Daniel Cogswell
 # Email: danielcogswell@ses.ai
 
-import os
-import mmap
-import struct
 import logging
+import mmap
+import os
+import struct
 from datetime import datetime, timezone
-import pandas as pd
 
-from .utils import _generate_cycle_number, _count_changes
-from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
-    multiplier_dict
+import numpy as np
+import polars as pl
+import tzlocal
+
+from .dicts import multiplier_dict, pl_dtype_dict, rec_columns, state_dict
 from .NewareNDAx import read_ndax
+from .utils import _count_changes, _generate_cycle_number
 
 logger = logging.getLogger('newarenda')
 
@@ -78,7 +80,7 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
         # Get the file version
         [nda_version] = struct.unpack('<B', mm[14:15])
-        logger.info(f"NDA version: {nda_version}")
+        logger.warning(f"NDA version: {nda_version}")
 
         # Try to find server and client version info
         version_loc = mm.find(b'BTSServer')
@@ -94,39 +96,47 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
         # version specific settings
         if nda_version == 29:
-            output, aux = _read_nda_29(mm)
+            data_df, aux_df = _read_nda_29(mm)
         elif nda_version == 130:
-            output, aux = _read_nda_130(mm)
+            if mm[1024:1025] == b'\x55':  # It is BTS 9.1
+                data_df, aux_df = _read_nda_130_91(mm)
+            else:
+                data_df, aux_df = _read_nda_130_90(mm)
         else:
             logger.error(f"nda version {nda_version} is not yet supported!")
             raise NotImplementedError(f"nda version {nda_version} is not yet supported!")
 
-    # Create DataFrame and sort by Index
-    df = pd.DataFrame(output, columns=rec_columns)
-    df.drop_duplicates(subset='Index', inplace=True)
+    # Convert uts_s to timezone aware Timestamp and replace Status ints with strings
+    try:
+        tz = tzlocal.get_localzone_name()
+    except Exception:
+        logger.info("Could not get local timezone, using UTC.")
+        tz = "UTC"
+    data_df = data_df.with_columns([
+        _count_changes(pl.col("Step")).alias("Step"),
+        pl.col("Time").round(3),  # Round to nearest ms
+        pl.from_epoch(pl.col("uts"), time_unit="s").dt.convert_time_zone(tz).alias("Timestamp") if "uts" in data_df.columns else pl.lit(None),
+        pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
+        pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
+    ])
 
-    if not df['Index'].is_monotonic_increasing:
-        df.sort_values('Index', inplace=True)
+    data_df = data_df.select(rec_columns)
 
-    df.reset_index(drop=True, inplace=True)
+    # drop duplicate indexes
+    data_df = data_df.unique(subset='Index')
 
     # Join temperature data
-    aux_df = pd.DataFrame(aux, columns=['Index', 'Aux', 'T', 'V'])
-    aux_df.drop_duplicates(inplace=True)
-    if not aux_df.empty:
-        aux_df = aux_df.astype(
-            {k: aux_dtype_dict[k] for k in aux_dtype_dict.keys() & aux_df.columns})
-        pvt_df = aux_df.pivot(index='Index', columns='Aux')
-        pvt_df.columns = pvt_df.columns.map(lambda x: ''.join(map(str, x)))
-        df = df.join(pvt_df, on='Index')
+    if not aux_df.is_empty():
+        if "Aux" in aux_df.columns:
+            aux_df = aux_df.unique(subset=['Index', 'Aux'])
+            aux_df = aux_df.pivot(index='Index', on='Aux', separator="")
+        else:
+            aux_df = aux_df.unique(subset=['Index'])
+        data_df = data_df.join(aux_df, on='Index')
 
-    # Postprocessing
-    df['Step'] = _count_changes(df['Step'])
-    if software_cycle_number:
-        df['Cycle'] = _generate_cycle_number(df, cycle_mode)
-    df = df.astype(dtype=dtype_dict)
-
-    return df
+    data_df = data_df.cast(pl_dtype_dict)
+    data_df = data_df.sort('Index')
+    return data_df.to_pandas()
 
 
 def _read_nda_29(mm):
@@ -161,62 +171,220 @@ def _read_nda_29(mm):
     mm.seek(header + 4)
 
     # Read data records
-    output = []
-    aux = []
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        if len(bytes) == record_len:
+    num_records = (len(mm)-header-4) // record_len
+    arr = np.frombuffer(mm[header + 4:], dtype=np.int8).reshape((num_records, record_len))
+    # remove rows where last 4 bytes are zero
+    logger.warning(arr.shape)
+    mask = (arr[:, 82:].view(np.int32) == 0).flatten()
+    arr = arr[mask]
+    # split into two arrays, one for data and one for aux
+    # data first byte is \x55 and aux first byte is \x65
+    data_mask = arr[:, 0] == 85
+    aux_mask = arr[:, 0] == 101
+    data_dtype = np.dtype([
+        ("_pad1",  "V2"), # 0-1
+        ("Index",  np.uint32), # 2-5
+        ("Cycle",  np.uint32), # 6-9
+        ("Step",   np.uint16), # 10-11
+        ("Status", np.uint8), # 12
+        ("Jump",  np.uint8), # 13
+        ("Time",   np.uint64), # 16-23
+        ("Voltage", np.int32), # 24-27
+        ("Current(mA)", np.int32), # 28-31
+        ("_pad2", "V8"), # 32-39
+        ("Charge_Capacity(mAh)", np.int64),
+        ("Discharge_Capacity(mAh)", np.int64),
+        ("Charge_Energy(mWh)", np.int64),
+        ("Discharge_Energy(mWh)", np.int64),
+        ("Y", np.uint16), # 70-71
+        ("M", np.uint8), # 72
+        ("D", np.uint8), # 73
+        ("h", np.uint8), # 74
+        ("m", np.uint8), # 75
+        ("s", np.uint8), # 76
+        ("_pad3", "V1"), # 77
+        ("Range", np.int32), # 78-81
+        ("_pad4", "V4"), # 82-85
+    ])
+    aux_dtype = np.dtype([
+        ("_pad1", "V1"), # 0
+        ("Aux", np.uint8), # 1
+        ("Index", np.uint32), # 2-5
+        ("_pad2", "V16"), # 6-21
+        ("V", np.int32), # 22-25
+        ("_pad3", "V8"), # 26-33
+        ("T", np.int16), # 34-35
+        ("_pad4", "V50"), # 36-81
+    ])
 
-            # Check for a data record
-            if (bytes[0:2] == b'\x55\x00'
-                    and bytes[82:87] == b'\x00\x00\x00\x00'):
-                output.append(_bytes_to_list(bytes))
+    data_dtype_no_pad = data_dtype[[name for name in data_dtype.names if not name.startswith("_")]]
+    aux_dtype_no_pad = aux_dtype[[name for name in aux_dtype.names if not name.startswith("_")]]
 
-            # Check for an auxiliary record
-            elif (bytes[0:1] == b'\x65'
-                    and bytes[82:87] == b'\x00\x00\x00\x00'):
-                aux.append(_aux_bytes_to_list(bytes))
+    data_arr = arr[data_mask].view(data_dtype_no_pad)
+    aux_arr = arr[aux_mask].view(aux_dtype_no_pad)
 
-    return output, aux
+    # Flatten the structured arrays to avoid array columns
+    data_arr = data_arr.flatten()
+    aux_arr = aux_arr.flatten()
 
+    # Convert to polars DataFrame
+    data_df = pl.DataFrame(data_arr)
+    data_df = data_df.with_columns([
+        pl.col("Cycle") + 1,
+        pl.col("Time").cast(pl.Float32) / 1000,
+        pl.col("Voltage").cast(pl.Float32) / 10000,
+        pl.col("Range").replace_strict(multiplier_dict, return_dtype=pl.Float64).alias("Multiplier"),
+        pl.datetime(pl.col("Y"), pl.col("M"), pl.col("D"), pl.col("h"), pl.col("m"), pl.col("s")).alias("Timestamp"),
+    ])
+    data_df = data_df.with_columns([
+        pl.col("Current(mA)") * pl.col("Multiplier"),
+        (pl.col(
+            ["Charge_Capacity(mAh)", "Discharge_Capacity(mAh)", "Charge_Energy(mWh)", "Discharge_Energy(mWh)"],
+        ) * pl.col("Multiplier") / 3600).cast(pl.Float32),
+    ])
+    data_df = data_df.drop(["Y", "M", "D", "h", "m", "s"])
 
-def _read_nda_130(mm):
-    """Helper function for nda version 130"""
-    mm_size = mm.size()
+    aux_df = pl.DataFrame(aux_arr)
+    aux_df = aux_df.with_columns([
+        pl.col("T").cast(pl.Float32) / 10,  # 0.1'C -> 'C
+        pl.col("V").cast(pl.Float32) / 10000,  # 0.1 mV -> V
+    ])
 
-    # Identify the beginning of the data section
+    return data_df, aux_df
+
+def _read_nda_130_91(mm):
+    """Helper function for nda version 130 from BTS 9.1"""
+
+    record_len = mm.find(mm[1024:1026], 1026) - 1024  # Get record length
+    _read_footer(mm)  # Log metadata
+    num_records = (len(mm)-2048) // record_len
+
+    # Read data
+    arr = np.frombuffer(mm[1024:1024+num_records*record_len], dtype=np.int8).reshape((num_records, record_len))
+
+    # In BTS9.1, data and aux are in the same rows
+    mask = (arr[:, 0] == 85) & (arr[:, 8:12].view(np.uint32) != 0).flatten()
+    dtype_list = [
+        ("_pad1", "V2"),  # 0-1
+        ("Step", np.uint8),  # 2
+        ("Status", np.uint8),  # 3
+        ("Cycle", np.uint32),  # 4-7
+        ("Index", np.uint32),  # 8-11
+        ("Time", np.uint32),  # 12-15
+        ("Time_ns", np.uint32),  # 16-19
+        ("Current(mA)", np.float32),  # 20-23
+        ("Voltage", np.float32),  # 24-27
+        ("Capacity", np.float32),  # 28-31
+        ("Energy", np.float32),  # 32-35
+        ("_pad3", "V8"),  # 36-43
+        ("uts_s", np.uint32),  # 44-47
+        ("uts_ns", np.uint32),  # 48-51
+    ]
+    if record_len > 52:
+        dtype_list.append(("_pad4", f"V{record_len-52}"))
+    data_dtype = np.dtype(dtype_list)
+    data_dtype_no_pad = data_dtype[[name for name in data_dtype.names if not name.startswith("_")]]
+    data_arr = arr[mask].view(data_dtype_no_pad)
+    data_arr = data_arr.flatten()
+    data_df = pl.DataFrame(data_arr)
+    data_df = data_df.with_columns([
+        pl.col("Capacity").clip(lower_bound=0).alias("Charge_Capacity(mAh)") / 3600,
+        pl.col("Capacity").clip(upper_bound=0).abs().alias("Discharge_Capacity(mAh)") / 3600,
+        pl.col("Energy").clip(lower_bound=0).alias("Charge_Energy(mWh)") / 3600,
+        pl.col("Energy").clip(upper_bound=0).abs().alias("Discharge_Energy(mWh)") / 3600,
+        (pl.col("Time") + pl.col("Time_ns") / 1e9).cast(pl.Float32).alias("Time"),
+        (pl.col("uts_s") + pl.col("uts_ns") / 1e9).alias("uts"),
+    ])
+    data_df = data_df.drop(["uts_s", "uts_ns", "Energy", "Capacity", "Time_ns"])
+
+    if record_len == 56:
+        aux_dtype = np.dtype([
+            ("_pad1", "V8"),  # 0-7
+            ("Index", np.uint32),  # 8-11
+            ("_pad2", "V40"),  # 12-51
+            ("T1", np.float32),  # 52-55
+        ])
+        aux_dtype_no_pad = aux_dtype[[name for name in aux_dtype.names if not name.startswith("_")]]
+        aux_arr = arr[mask].view(aux_dtype_no_pad)
+        aux_arr = aux_arr.flatten()
+        aux_df = pl.DataFrame(aux_arr)
+    else:
+        aux_df = pl.DataFrame()
+
+    return data_df, aux_df
+
+def _read_nda_130_90(mm):
+    """Helper function for nda version 130 from BTS 9.0"""
+
     record_len = 88
-    identifier = mm[1024:1030]
-    if mm[1024:1025] == b'\x55':  # BTS 9.1
-        # Find next record and get length
-        record_len = mm.find(mm[1024:1026], 1026) - 1024
-    mm.seek(1024)
+    _read_footer(mm)  # Log metadata
+    num_records = (len(mm)-2048) // record_len
 
-    # Read data records
-    output = []
-    aux = []
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        if len(bytes) == record_len:
+    # Read data
+    arr = np.frombuffer(mm[1024:1024+num_records*record_len], dtype=np.int8).reshape((num_records, record_len))
 
-            # Check for a data record
-            if bytes[0:1] == b'\x55':
-                output.append(_bytes_to_list_BTS91(bytes))
-                if record_len == 56:
-                    aux.append(_aux_bytes_to_list_BTS91(bytes))
-            elif bytes[0:6] == identifier:
-                output.append(_bytes_to_list_BTS9(bytes[4:]))
+    # Data and aux stored in different rows
+    aux_mask = (arr[:, 1:5].view(np.int32) == 101).flatten()
+    row_mask = (arr[:, 16:20].view(np.uint32) != 0).flatten()
+    logger.warning(f"{aux_mask.shape}, {row_mask.shape}")
 
-            # Check for an auxiliary record
-            elif bytes[0:5] == b'\x00\x00\x00\x00\x65':
-                aux.append(_aux_bytes_to_list(bytes[4:]))
+    data_dtype = np.dtype([
+        ("_pad1", "V9"),  # 0-8
+        ("Step", np.uint8),  # 9
+        ("Status", np.uint8),  # 10
+        ("_pad2", "V5"),  # 11-15
+        ("Index", np.uint32),  # 16-19
+        ("_pad3", "V8"),  # 20-27
+        ("Time", np.uint64),  # 28-35
+        ("Voltage", np.float32),  # 36-39
+        ("Current(mA)", np.float32),  # 40-43
+        ("_pad4", "V8"),  # 44-51
+        ("Charge_Capacity(mAh)", np.float32),  # 52-55
+        ("Charge_Energy(mWh)", np.float32),  # 56-59
+        ("Discharge_Capacity(mAh)", np.float32),  # 60-63
+        ("Discharge_Energy(mWh)", np.float32),  # 64-67
+        ("uts", np.uint64),  # 68-75
+        ("_pad5", "V12"),  # 76-87
+    ])
+    logger.warning(f"Len data dtype in bytes: {data_dtype.itemsize}")
+    data_dtype_no_pad = data_dtype[[name for name in data_dtype.names if not name.startswith("_")]]
+    data_arr = arr[row_mask & ~aux_mask].view(data_dtype_no_pad)
+    data_arr = data_arr.flatten()
+    data_df = pl.DataFrame(data_arr)
+    data_df = data_df.with_columns([
+        pl.col("uts").cast(pl.Float64) / 1e6,  # us -> s
+        (pl.col("Time") / 1e6).cast(pl.Float32),  # us -> s
+        pl.col(["Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
+                "Charge_Energy(mWh)", "Discharge_Energy(mWh)"]) / 3600,
+    ])
 
-            elif bytes[0:1] == b'\x81':
-                break
+    logger.warning("Reading BTS9 aux")
+    aux_dtype = np.dtype([
+        ("_pad1", "V5"),  # 0-4
+        ("Aux", np.uint8),  # 5
+        ("Index", np.uint32),  # 6-9
+        ("_pad2", "V16"),  # 10-25
+        ("V", np.int32),  # 26-29
+        ("_pad3", "V8"),  # 30-37
+        ("T", np.int16),  # 38-41
+        ("_pad4", "V48"),  # 42-87
+    ])
+    logger.warning(f"Len aux dtype in bytes: {aux_dtype.itemsize}")
+    aux_dtype_no_pad = aux_dtype[[name for name in aux_dtype.names if not name.startswith("_")]]
+    aux_arr = arr[row_mask & aux_mask].view(aux_dtype_no_pad)
+    aux_arr = aux_arr.flatten()
+    aux_df = pl.DataFrame(aux_arr)
+    aux_df = aux_df.with_columns([
+        pl.col("T").cast(pl.Float32) / 10,  # 0.1'C -> 'C
+        pl.col("V").cast(pl.Float32) / 10000,  # 0.1 mV -> V
+    ])
 
-    # Find footer data block
+    return data_df, aux_df
+
+def _read_footer(mm):
+    # Identify footer
     footer = mm.rfind(b'\x06\x00\xf0\x1d\x81\x00\x03\x00\x61\x90\x71\x90\x02\x7f\xff\x00', 1024)
-    if footer != -1:
+    if footer:
         mm.seek(footer+16)
         bytes = mm.read(499)
 
@@ -231,119 +399,8 @@ def _read_nda_130(mm):
         remarks = remarks.replace(chr(0), '').strip()
         logger.info(f"Remarks: {remarks}")
 
-    return output, aux
-
-
 def _valid_record(bytes):
     """Helper function to identify a valid record"""
     # Check for a non-zero Status
     [Status] = struct.unpack('<B', bytes[12:13])
     return (Status != 0)
-
-
-def _bytes_to_list(bytes):
-    """Helper function for interpreting a byte string"""
-
-    # Extract fields from byte string
-    [Index, Cycle, Step] = struct.unpack('<III', bytes[2:14])
-    [Status, Jump, Time, Voltage, Current] = struct.unpack('<BBQii', bytes[12:30])
-    [Charge_capacity, Discharge_capacity,
-     Charge_energy, Discharge_energy] = struct.unpack('<qqqq', bytes[38:70])
-    [Y, M, D, h, m, s] = struct.unpack('<HBBBBB', bytes[70:77])
-    [Range] = struct.unpack('<i', bytes[78:82])
-
-    # Index and should not be zero
-    if Index == 0 or Status == 0:
-        return []
-
-    multiplier = multiplier_dict[Range]
-
-    # Create a dictionary for the record
-    list = [
-        Index,
-        Cycle + 1,
-        Step,
-        state_dict[Status],
-        Time/1000,
-        Voltage/10000,
-        Current*multiplier,
-        Charge_capacity*multiplier/3600,
-        Discharge_capacity*multiplier/3600,
-        Charge_energy*multiplier/3600,
-        Discharge_energy*multiplier/3600,
-        datetime(Y, M, D, h, m, s)
-    ]
-    return list
-
-
-def _bytes_to_list_BTS9(bytes):
-    """Helper function to interpret byte strings from BTS9"""
-    [Step, Status] = struct.unpack('<BB', bytes[5:7])
-    [Index] = struct.unpack('<I', bytes[12:16])
-    [Time, Voltage, Current] = struct.unpack('<Qff', bytes[24:40])
-    [Charge_Capacity, Charge_Energy,
-     Discharge_Capacity, Discharge_Energy,
-     Date] = struct.unpack('<ffffQ', bytes[48:72])
-
-    # Create a dictionary for the record
-    list = [
-        Index,
-        0,
-        Step,
-        state_dict[Status],
-        Time/1e6,
-        Voltage,
-        Current,
-        Charge_Capacity/3600,
-        Discharge_Capacity/3600,
-        Charge_Energy/3600,
-        Discharge_Energy/3600,
-        datetime.fromtimestamp(Date/1e6, timezone.utc).astimezone()
-    ]
-    return list
-
-
-def _bytes_to_list_BTS91(bytes):
-    """Helper function to interpret byte strings from BTS9.1"""
-    [Step, Status] = struct.unpack('<BB', bytes[2:4])
-    [Index, Time, Time_ns] = struct.unpack('<III', bytes[8:20])
-    [Current, Voltage, Capacity, Energy] = struct.unpack('<ffff', bytes[20:36])
-    [Date, Date_ns] = struct.unpack('<II', bytes[44:52])
-
-    # Convert capacity and energy to charge and discharge fields
-    Charge_Capacity = 0 if Capacity < 0 else Capacity
-    Discharge_Capacity = 0 if Capacity > 0 else abs(Capacity)
-    Charge_Energy = 0 if Energy < 0 else Energy
-    Discharge_Energy = 0 if Energy > 0 else abs(Energy)
-
-    # Create a dictionary for the record
-    list = [
-        Index,
-        0,
-        Step,
-        state_dict[Status],
-        Time + 1e-9*Time_ns,
-        Voltage,
-        Current,
-        Charge_Capacity/3600,
-        Discharge_Capacity/3600,
-        Charge_Energy/3600,
-        Discharge_Energy/3600,
-        datetime.fromtimestamp(Date + 1e-9*Date_ns, timezone.utc).astimezone()
-    ]
-    return list
-
-
-def _aux_bytes_to_list(bytes):
-    """Helper function for intepreting auxiliary records"""
-    [Aux, Index] = struct.unpack('<BI', bytes[1:6])
-    [V] = struct.unpack('<i', bytes[22:26])
-    [T] = struct.unpack('<h', bytes[34:36])
-
-    return [Index, Aux, T/10, V/10000]
-
-
-def _aux_bytes_to_list_BTS91(bytes):
-    [Index] = struct.unpack('<I', bytes[8:12])
-    [T] = struct.unpack('<f', bytes[52:56])
-    return [Index, 1, T, None]
