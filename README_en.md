@@ -1,4 +1,6 @@
 This is a forked version of the NewareNDA library.
+It supports reading v8, v22, v23, v26, v28 versions of nda files.
+It has improved the robustness of file parsing.
 
 # NewareNDA
 
