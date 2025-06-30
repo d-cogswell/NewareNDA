@@ -18,6 +18,49 @@ from .NewareNDAx import read_ndax
 logger = logging.getLogger('newarenda')
 
 
+def _decode_remarks(byte_data):
+    """
+    智能解码备注字节数据，支持多种编码格式
+    
+    参数：
+        byte_data: 要解码的字节数据
+    
+    返回：
+        str: 解码后的字符串，如果所有编码都失败则返回空字符串
+    """
+    # 常见编码格式列表，按优先级排序
+    encodings = ['utf-8', 'gb2312', 'gbk', 'ascii']
+    
+    for encoding in encodings:
+        try:
+            remarks = byte_data.decode(encoding)
+            # 清除空字符并去除首尾空白
+            remarks = remarks.replace(chr(0), '').strip()
+            if remarks:  # 如果解码成功且不为空
+                logger.info(f"Remarks (使用 {encoding} 编码): {remarks}")
+                return remarks
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    
+    # 最后尝试latin1，但要检查是否包含可打印字符
+    try:
+        remarks = byte_data.decode('latin1')
+        remarks = remarks.replace(chr(0), '').strip()
+        # 检查是否主要由可打印ASCII字符组成
+        if remarks and any(32 <= ord(c) <= 126 for c in remarks):
+            # 检查可打印字符的比例
+            printable_ratio = sum(1 for c in remarks if 32 <= ord(c) <= 126) / len(remarks)
+            if printable_ratio >= 0.8:  # 如果80%以上是可打印字符
+                logger.info(f"Remarks (使用 latin1 编码): {remarks}")
+                return remarks
+    except (UnicodeDecodeError, UnicodeError):
+        pass
+    
+    # 如果所有编码都失败或解码结果不合理
+    logger.warning("无法使用任何编码格式解析备注字节数据")
+    return ""
+
+
 def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
     """
     从 Neware nda 或 ndax 二进制文件中读取电化学数据。
@@ -163,7 +206,7 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
         df['Cycle'] = _generate_cycle_number(df, cycle_mode)
     df = df.astype(dtype=dtype_dict)
 
-    return df
+    return df, nda_version
 
 
 def _read_nda_8(mm):
@@ -313,14 +356,8 @@ def _read_nda_22(mm):
     [active_mass] = struct.unpack('<I', mm[152:156])
     logger.info(f"Active mass: {active_mass/1000} mg")
 
-    try:
-        remarks = mm[2317:2417].decode('ASCII')
-        # 清除空字符
-        remarks = remarks.replace(chr(0), '').strip()
-        logger.info(f"Remarks: {remarks}")
-    except UnicodeDecodeError:
-        logger.warning("将备注字节转换为 ASCII 失败")
-        remarks = ""
+    # 使用智能解码函数处理备注
+    remarks = _decode_remarks(mm[2317:2417])
 
     # 识别数据部分的开头
     record_len = 86
@@ -364,14 +401,8 @@ def _read_nda_26(mm):
     [active_mass] = struct.unpack('<I', mm[152:156])
     logger.info(f"Active mass: {active_mass/1000} mg")
 
-    try:
-        remarks = mm[2317:2417].decode('ASCII')
-        # 清除空字符
-        remarks = remarks.replace(chr(0), '').strip()
-        logger.info(f"Remarks: {remarks}")
-    except UnicodeDecodeError:
-        logger.warning("将备注字节转换为 ASCII 失败")
-        remarks = ""
+    # 使用智能解码函数处理备注
+    remarks = _decode_remarks(mm[2317:2417])
 
     # 识别数据部分的开头
     record_len = 86
@@ -415,14 +446,8 @@ def _read_nda_29(mm):
     [active_mass] = struct.unpack('<I', mm[152:156])
     logger.info(f"Active mass: {active_mass/1000} mg")
 
-    try:
-        remarks = mm[2317:2417].decode('ASCII')
-        # 清除空字符
-        remarks = remarks.replace(chr(0), '').strip()
-        logger.info(f"Remarks: {remarks}")
-    except UnicodeDecodeError:
-        logger.warning("将备注字节转换为 ASCII 失败")
-        remarks = ""
+    # 使用智能解码函数处理备注
+    remarks = _decode_remarks(mm[2317:2417])
 
     # 识别数据部分的开头
     record_len = 86
@@ -502,12 +527,8 @@ def _read_nda_130(mm):
         [active_mass] = struct.unpack('<d', bytes[-8:])
         logger.info(f"Active mass: {active_mass} mg")
 
-        # 获取备注
-        remarks = bytes[363:491].decode('ASCII')
-
-        # 清除空字符
-        remarks = remarks.replace(chr(0), '').strip()
-        logger.info(f"Remarks: {remarks}")
+        # 使用智能解码函数处理备注
+        remarks = _decode_remarks(bytes[363:491])
 
     return output, aux
 
