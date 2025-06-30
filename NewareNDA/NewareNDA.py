@@ -8,6 +8,7 @@ import struct
 import logging
 from datetime import datetime, timezone
 import pandas as pd
+import re
 
 from .utils import _generate_cycle_number, _count_changes
 from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
@@ -93,19 +94,20 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             logger.info("未找到 BTS 版本！")
 
         # 版本特定设置
-        if nda_version == 8:
+        # print(f"nda_version == {nda_version}")
+        if nda_version == 8: # 8 基于 29 改
             output, aux = _read_nda_8(mm)
-        elif nda_version == 22:
+        elif nda_version == 22: # 22 基于 29 改
             output, aux = _read_nda_22(mm)
-        elif nda_version == 23:
+        elif nda_version == 23: # 23 和 22 相同
             output, aux = _read_nda_22(mm)
-        elif nda_version == 26:
+        elif nda_version == 26: # 26 和 29 相同
             output, aux = _read_nda_26(mm)
-        elif nda_version == 28:
+        elif nda_version == 28: # 28 和 29 相同
             output, aux = _read_nda_29(mm)
-        elif nda_version == 29:
+        elif nda_version == 29: # 原始版本
             output, aux = _read_nda_29(mm)
-        elif nda_version == 130:
+        elif nda_version == 130: # 原始版本
             output, aux = _read_nda_130(mm)
         else:
             logger.error(f"不支持 nda 版本 {nda_version}！")
@@ -132,6 +134,31 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
     # 后处理
     df['Step'] = _count_changes(df['Step'])
+
+    # v8 文件补充容量与能量（通过数值积分获得）
+    if nda_version == 8:
+        # Δt 处理：遇到新工步时 Time 会重置，需要将负差值替换为当前 Time
+        dt = df['Time'].diff()
+        dt.iloc[0] = 0
+        dt = dt.where(dt >= 0, df['Time'])
+
+        # 绝对时间戳
+        if df['Timestamp'].notnull().any():
+            start_ts = df['Timestamp'].iloc[0]
+            df['Timestamp'] = start_ts + pd.to_timedelta(dt.cumsum(), unit='s')
+
+        # mAh 增量
+        cap_inc = (df['Current(mA)'].abs()) * dt / 3600
+
+        # 充/放电容量累加
+        df['Charge_Capacity(mAh)'] = (cap_inc.where(df['Current(mA)'] > 0, 0)).cumsum()
+        df['Discharge_Capacity(mAh)'] = (cap_inc.where(df['Current(mA)'] < 0, 0)).cumsum()
+
+        # 能量增量 (mWh)
+        en_inc = df['Voltage'] * cap_inc
+        df['Charge_Energy(mWh)'] = (en_inc.where(df['Current(mA)'] > 0, 0)).cumsum()
+        df['Discharge_Energy(mWh)'] = (en_inc.where(df['Current(mA)'] < 0, 0)).cumsum()
+
     if software_cycle_number:
         df['Cycle'] = _generate_cycle_number(df, cycle_mode)
     df = df.astype(dtype=dtype_dict)
@@ -182,6 +209,22 @@ def _read_nda_8(mm):
 
     output = []
     idx = 1  # 自增索引作为 Index 的后备方案
+
+    # --------------------
+    # 提取开始时间戳（ASCII 字符串）
+    # 典型格式："YYYY.MM.DD HH:MM:SS"
+    # --------------------
+    start_ts = None
+    m = re.search(rb'20[0-9]{2}\.[0-9]{2}\.[0-9]{2}\s[0-9]{2}:[0-9]{2}:[0-9]{2}', mm[:header])
+    if m:
+        try:
+            ts_str = m.group().decode()
+            start_ts = datetime.strptime(ts_str, "%Y.%m.%d %H:%M:%S")
+            # 转换为本地时区
+            start_ts = start_ts.replace(tzinfo=timezone.utc).astimezone()
+        except Exception:
+            start_ts = None
+
     while mm.tell() + record_len <= mm_size:
         chunk = mm.read(record_len)
 
@@ -191,6 +234,12 @@ def _read_nda_8(mm):
 
         rec = _bytes_to_list_8(chunk, fallback_index=idx)
         if rec:
+            # 计算绝对时间戳
+            if start_ts is not None:
+                try:
+                    rec[11] = start_ts + pd.to_timedelta(rec[4], unit='s')
+                except Exception:
+                    pass
             output.append(rec)
         idx += 1
 
@@ -202,35 +251,43 @@ def _read_nda_8(mm):
 def _bytes_to_list_8(bytes, fallback_index=0):
     """解析 nda v8 版 59 B 数据记录，返回符合 rec_columns 的列表。"""
 
-    # Index（若字段为 0，则使用回退索引）
-    Index = struct.unpack('<I', bytes[2:6])[0] or fallback_index
+    # v8 文件中的 Index 字段通常为 0，因此直接使用回退索引
+    Index = fallback_index
 
-    Step = bytes[10]
+    # 状态代码位于字节 18；将其直接用作"工步号"，后续由 _count_changes 重新编号
     Status_code = bytes[18]
+    Step = Status_code  # 工步号基于状态变化，而非记录计数
 
-    Current_raw = struct.unpack('<i', bytes[20:24])[0]  # 单位 μA（推测）
-    Voltage_raw = struct.unpack('<i', bytes[24:28])[0]  # 单位 1e-4 V
+    # v8 版记录格式（经反向工程）
+    # 20–23 : Time (int32, s)
+    # 24–27 : Voltage (int32, 1e-4 V)
+    # 28–31 : Current (int32, µA)
 
-    # 旧版文件缺少时间 / 容量 / 能量，可留零占位
-    Time = 0.0
+    Time = struct.unpack('<i', bytes[20:24])[0]
+    Voltage_raw = struct.unpack('<i', bytes[24:28])[0]
+    Current_raw = struct.unpack('<i', bytes[28:32])[0]
+
+    Voltage = Voltage_raw / 10000            # 转换为 V
+    Current = Current_raw / 1000             # 转换为 mA
+
+    # 占位符：容量与能量稍后在 read_nda() 中根据电流积分计算
     Charge_capacity = Discharge_capacity = 0.0
     Charge_energy = Discharge_energy = 0.0
 
-    # 根据电流正负判断充/放电，暂不修改容量能量字段
-
-    # 转换电压、电流
-    Voltage = Voltage_raw / 10000
-    # 量程未知，直接使用以 mA 为单位（μA *1e-3）
-    Current = Current_raw / 1000
-
-    # v8 文件可能仅包含单循环
+    # v8 文件通常仅包含单循环
     Cycle = 1
 
-    # 生成时间戳占位（None）
-    timestamp = None
+    # 自定义 v8 状态映射。若未包含则回退到通用 state_dict
+    v8_state_dict = {
+        1: 'Rest',
+        2: 'CC_DChg',
+        3: 'CV_DChg',
+        4: 'CC_DChg',
+    }
+    Status = v8_state_dict.get(Status_code, state_dict.get(Status_code, f'Unknown_{Status_code}'))
 
-    # 状态映射，不在字典范围时使用 Unknown
-    Status = state_dict.get(Status_code, f'Unknown_{Status_code}')
+    # 时间戳占位；稍后在 _read_nda_8 中使用开始时间计算
+    timestamp = None
 
     return [
         Index,
