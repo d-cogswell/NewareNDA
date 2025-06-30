@@ -657,6 +657,10 @@ def _bytes_to_list_22(bytes):
        位于原年份等字段所在位置。
     3. Range 字段向后顺延 2 字节至偏移 80–83。
     """
+    
+    # v22 版本专用的 multiplier 字典，Range 为 0 时使用 1e-2 缩放
+    multiplier_dict_v22 = multiplier_dict.copy()
+    multiplier_dict_v22[0] = 1e-2
 
     # 基本字段解析
     Index, Cycle = struct.unpack('<II', bytes[2:10])
@@ -682,7 +686,7 @@ def _bytes_to_list_22(bytes):
     if Index == 0 or Status == 0:
         return []
 
-    multiplier = multiplier_dict[Range]
+    multiplier = multiplier_dict_v22[Range]
 
     # 生成本地时区时间戳
     ts = datetime.fromtimestamp(Timestamp_sec + Msec/1000, timezone.utc).astimezone()
