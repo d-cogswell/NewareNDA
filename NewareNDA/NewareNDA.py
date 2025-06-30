@@ -142,8 +142,8 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             output, aux = _read_nda_8(mm)
         elif nda_version == 22: # 22 基于 29 改
             output, aux = _read_nda_22(mm)
-        elif nda_version == 23: # 23 和 22 相同
-            output, aux = _read_nda_22(mm)
+        elif nda_version == 23: # 23 基于 22 改
+            output, aux = _read_nda_23(mm)
         elif nda_version == 26: # 26 和 29 相同
             output, aux = _read_nda_26(mm)
         elif nda_version == 28: # 28 和 29 相同
@@ -384,6 +384,50 @@ def _read_nda_22(mm):
             if (bytes[0:2] == b'\x55\x00'
                     and bytes[82:87] == b'\x00\x00\x00\x00'):
                 output.append(_bytes_to_list_22(bytes))
+
+            # 检查辅助记录
+            elif (bytes[0:1] == b'\x65'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                aux.append(_aux_bytes_to_list(bytes))
+
+    return output, aux
+
+def _read_nda_23(mm):
+    """nda 版本 23 的辅助函数"""
+    mm_size = mm.size()
+
+    # 获取活性物质质量
+    [active_mass] = struct.unpack('<I', mm[152:156])
+    logger.info(f"Active mass: {active_mass/1000} mg")
+
+    # 使用智能解码函数处理备注
+    remarks = _decode_remarks(mm[2317:2417])
+
+    # 识别数据部分的开头
+    record_len = 86
+    identifier = b'\x00\x00\x00\x00\x55\x00'
+    header = mm.find(identifier)
+    if header == -1:
+        logger.error("File does not contain any valid records.")
+        raise EOFError("File does not contain any valid records.")
+    while (((mm[header + 4 + record_len] != 85)
+            | (not _valid_record(mm[header+4:header+4+record_len])))
+            if header + 4 + record_len < mm_size
+            else False):
+        header = mm.find(identifier, header + 4)
+    mm.seek(header + 4)
+
+    # 读取数据记录
+    output = []
+    aux = []
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        if len(bytes) == record_len:
+
+            # 检查数据记录
+            if (bytes[0:2] == b'\x55\x00'
+                    and bytes[82:87] == b'\x00\x00\x00\x00'):
+                output.append(_bytes_to_list_23(bytes))
 
             # 检查辅助记录
             elif (bytes[0:1] == b'\x65'
@@ -687,6 +731,66 @@ def _bytes_to_list_22(bytes):
         return []
 
     multiplier = multiplier_dict_v22[Range]
+
+    # 生成本地时区时间戳
+    ts = datetime.fromtimestamp(Timestamp_sec + Msec/1000, timezone.utc).astimezone()
+
+    rec = [
+        Index,
+        Cycle + 1,
+        Step,
+        state_dict.get(Status, f'Unknown_{Status}'),
+        Time/1000,
+        Voltage/10000,
+        Current*multiplier,
+        Charge_capacity*multiplier/3600,
+        Discharge_capacity*multiplier/3600,
+        Charge_energy*multiplier/3600,
+        Discharge_energy*multiplier/3600,
+        ts
+    ]
+
+    return rec
+
+def _bytes_to_list_23(bytes):
+    """解析 nda version 23 数据记录
+
+    该版本与 v22 版数据结构大体相同，但 Range=0 时的电流缩放系数不同。
+    1. Step 字段仅占 2 字节（uint16），紧跟在 Cycle 之后。
+    2. 日期时间以 Unix epoch（秒）+ 毫秒存储，分别为 4 字节和 2 字节，
+       位于原年份等字段所在位置。
+    3. Range 字段向后顺延 2 字节至偏移 80–83。
+    """
+    
+    # v23 版本专用的 multiplier 字典，Range 为 0 时使用 1e-3 缩放
+    multiplier_dict_v23 = multiplier_dict.copy()
+    multiplier_dict_v23[0] = 1e-3
+
+    # 基本字段解析
+    Index, Cycle = struct.unpack('<II', bytes[2:10])
+    Step,         = struct.unpack('<H',  bytes[10:12])
+    Status, Jump  = struct.unpack('<BB', bytes[12:14])
+
+    # 时间、电压、电流
+    Time, Voltage, Current = struct.unpack('<Qii', bytes[14:30])
+
+    # 容量 / 能量（int64）
+    Charge_capacity, Discharge_capacity, Charge_energy, Discharge_energy = \
+        struct.unpack('<qqqq', bytes[38:70])
+
+    # 时间戳（秒）+ 毫秒
+    Timestamp_sec, = struct.unpack('<I', bytes[70:74])
+    # bytes[74:78] 似乎为保留字节（全 0）
+    Msec,          = struct.unpack('<H', bytes[78:80])
+
+    # Range
+    Range,         = struct.unpack('<i', bytes[80:84])
+
+    # 无效索引或静置状态跳过
+    if Index == 0 or Status == 0:
+        return []
+
+    multiplier = multiplier_dict_v23[Range]
 
     # 生成本地时区时间戳
     ts = datetime.fromtimestamp(Timestamp_sec + Msec/1000, timezone.utc).astimezone()
