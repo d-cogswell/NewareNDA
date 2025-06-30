@@ -117,6 +117,7 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
                 logger.info("Could not get local timezone, using UTC.")
                 tz = "UTC"
             data_df = data_df.with_columns([
+                pl.col("Time").round(3),  # Round to nearest ms
                 pl.from_epoch(pl.col("uts"), time_unit="s").dt.convert_time_zone(tz).alias("Timestamp"),
                 pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
                 pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
@@ -332,7 +333,7 @@ def _read_ndc_11_filetype_5(mm):
         ])
         return _read_ndc(mm, dtype, 132, 2).with_columns([
             pl.col("V") * 1e-4,  # 0.1
-            pl.col("T") * 0.1,  # 0.1'C -> 'C
+            pl.col("T").cast(pl.Float32) * 0.1,  # 0.1'C -> 'C
             pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
         ])
 
@@ -347,7 +348,7 @@ def _read_ndc_11_filetype_5(mm):
             ("_pad3", "V51"),
         ])
         return _read_ndc(mm, dtype, 132, 4).with_columns([
-            pl.col("T") * 0.1,  # 0.1'C -> 'C
+            pl.col("T").cast(pl.Float32) * 0.1,  # 0.1'C -> 'C
         ])
 
     msg = "Unknown file structure for ndc version 11 filetype 5."
@@ -384,7 +385,7 @@ def _read_ndc_11_filetype_18(mm):
         ("uts_ms", "<i2"),
     ])
     return _read_ndc(mm, dtype, 132, 16).with_columns([
-        pl.col("Time", "dt") / 1000,  # ms -> s
+        pl.col("Time", "dt").cast(pl.Float32) / 1000,  # Division in 32-bit
         pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
             "Charge_Energy(mWh)", "Discharge_Energy(mWh)") / 3600, # mAs|mWs -> mAh|mWh
         (pl.col("uts_s") + pl.col("uts_ms") / 1000).alias("uts"),
@@ -441,7 +442,7 @@ def _read_ndc_14_filetype_18(mm):
         ("_pad3",  "V8"),
     ])
     return _read_ndc(mm, dtype, 132, 4).with_columns([
-        pl.col("Time", "dt") / 1000,  # ms -> s
+        pl.col("Time", "dt").cast(pl.Float32) / 1000,  # ms -> s
         pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
             "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000,  # Ah|Wh -> mAh|mWh
         (pl.col("uts_s") + pl.col("uts_ms") / 1000).alias("uts"),
@@ -486,9 +487,9 @@ def _read_ndc_17_filetype_18(mm):
         ("_pad3",  "V53"),
     ])
     return _read_ndc(mm,dtype, 132, 64).with_columns([
-        pl.col("Time", "dt") / 1000,
-        pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
-            "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000,
+        pl.col("Time", "dt").cast(pl.Float32) / 1000,
+        (pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
+            "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000).cast(pl.Float32),  # Ah|Wh -> mAh|mWh
         (pl.col("uts_s") + pl.col("uts_ms") / 1000).alias("uts"),
     ])
 
