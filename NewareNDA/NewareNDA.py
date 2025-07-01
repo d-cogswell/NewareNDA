@@ -106,7 +106,8 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             logger.error(f"nda version {nda_version} is not yet supported!")
             raise NotImplementedError(f"nda version {nda_version} is not yet supported!")
 
-    # Convert uts_s to timezone aware Timestamp and replace Status ints with strings
+    # Convert uts_s to Timestamp and replace Status ints with strings
+    # Leave timezone localization to the end! Doing in polars then casting to pandas can cause kernel crashes
     try:
         tz = tzlocal.get_localzone_name()
     except Exception:
@@ -115,28 +116,30 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
     data_df = data_df.with_columns([
         _count_changes(pl.col("Step")).alias("Step"),
         pl.col("Time").round(3),  # Round to nearest ms
-        pl.from_epoch(pl.col("uts"), time_unit="s").dt.convert_time_zone(tz).alias("Timestamp") if "uts" in data_df.columns else pl.lit(None),
+        pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp") if "uts" in data_df.columns else pl.lit(None),
         pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
         pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
     ])
 
     data_df = data_df.select(rec_columns)
 
-    # drop duplicate indexes
-    data_df = data_df.unique(subset='Index')
+    # Drop duplicate indexes
+    data_df = data_df.unique(subset="Index")
 
     # Join temperature data
     if not aux_df.is_empty():
         if "Aux" in aux_df.columns:
-            aux_df = aux_df.unique(subset=['Index', 'Aux'])
-            aux_df = aux_df.pivot(index='Index', on='Aux', separator="")
+            aux_df = aux_df.unique(subset=["Index", "Aux"])
+            aux_df = aux_df.pivot(index="Index", on="Aux", separator="")
         else:
-            aux_df = aux_df.unique(subset=['Index'])
-        data_df = data_df.join(aux_df, on='Index')
+            aux_df = aux_df.unique(subset=["Index"])
+        data_df = data_df.join(aux_df, on="Index")
 
     data_df = data_df.cast(pl_dtype_dict)
-    data_df = data_df.sort('Index')
-    return data_df.to_pandas()
+    data_df = data_df.sort("Index")
+    data_df = data_df.to_pandas()
+    data_df["Timestamp"] = data_df["Timestamp"].dt.tz_localize(tz, ambiguous="infer")
+    return data_df
 
 
 def _read_nda_29(mm):
