@@ -126,6 +126,8 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             # Keep only record columns
             data_df = data_df.select(rec_columns)
 
+        # Cast to correct types
+        data_df = data_df.cast(pl_dtype_dict)
 
         # Read and merge Aux data from ndc files
         for f in zf.namelist():
@@ -144,10 +146,9 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
                 aux_file = zf.extract(f, path=tmpdir)
                 aux = read_ndc(aux_file)
                 aux.cast({k:v for k,v in pl_aux_dtype_dict.items() if k in aux.columns})
-                aux = aux.rename({col: f"{col}{aux_id}" for col in aux.columns if col not in ['Index']})
-                data_df.join(aux, how="left", on="Index")
+                aux = aux.rename({col: f"{col}{aux_id}" for col in aux.columns if col not in ["Index"]})
+                data_df = data_df.join(aux, how="left", on="Index")
 
-    data_df = data_df.cast(pl_dtype_dict)
     return data_df.to_pandas()
 
 
