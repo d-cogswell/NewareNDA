@@ -105,8 +105,12 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         for f in zf.namelist():
 
             # If the filename contains a channel number, convert to aux_id
-            m = re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f)
-            if m:
+            m = re.search("data_AUX_([0-9]+)_([0-9]+)_[0-9]+[.]ndc", f)
+            if m and m[2] == '1013':
+                # 1013 is humidity data. Ignore for now.
+                logger.warning(f'{f} contains humidity data which will not be processed. Please open a bug report if you need this data')
+                continue
+            elif m:
                 ch = int(m[1])
                 aux_id = aux_ch_dict[ch]
             else:
