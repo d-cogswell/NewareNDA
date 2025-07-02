@@ -15,7 +15,6 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import polars as pl
-import tzlocal
 
 from .dicts import (
     multiplier_dict,
@@ -100,33 +99,26 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             step_df = read_ndc(step_file)
 
             # Merge dataframes
-            data_df = data_df.join(runInfo_df, how='left', on='Index')
+            data_df = data_df.join(runInfo_df, how="left", on="Index")
             data_df = data_df.with_columns([
-                pl.col('Step').forward_fill(),  # Forward fill Step column
+                pl.col("Step").forward_fill(),  # Forward fill Step column
             ])
-            data_df = data_df.join(step_df, how='left', on='Step')
+            data_df = data_df.join(step_df, how="left", on="Step")
 
-            # Fill in missing data - Neware appears to fabricate data
-            if data_df["Time"].is_null().any():
-                data_df = _data_interpolation(data_df)
+        # Fill in missing data - Neware appears to fabricate data
+        if data_df["Time"].is_null().any():
+            data_df = _data_interpolation(data_df)
 
-            # Convert uts_s to timezone aware Timestamp and replace Status ints with strings
-            try:
-                tz = tzlocal.get_localzone_name()
-            except Exception:
-                logger.info("Could not get local timezone, using UTC.")
-                tz = "UTC"
-            data_df = data_df.with_columns([
-                pl.col("Time").round(3),  # Round to nearest ms
-                pl.from_epoch(pl.col("uts"), time_unit="s").dt.convert_time_zone(tz).alias("Timestamp"),
-                pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
-                pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
-            ])
+        # Convert uts_s to timezone aware Timestamp and replace Status ints with strings
+        data_df = data_df.with_columns([
+            pl.col("Time").round(3),  # Round to nearest ms
+            pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp"),
+            pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
+            pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
+        ])
 
-            # Keep only record columns
-            data_df = data_df.select(rec_columns)
-
-        # Cast to correct types
+        # Keep only record columns
+        data_df = data_df.select(rec_columns)
         data_df = data_df.cast(pl_dtype_dict)
 
         # Read and merge Aux data from ndc files
@@ -149,8 +141,11 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
                 aux = aux.rename({col: f"{col}{aux_id}" for col in aux.columns if col not in ["Index"]})
                 data_df = data_df.join(aux, how="left", on="Index")
 
-    return data_df.to_pandas()
-
+    # Convert to pandas, change timestamp to local timezone
+    data_df = data_df.to_pandas().reset_index(drop=True)
+    tz = datetime.now().astimezone().tzinfo
+    data_df["Timestamp"] = pd.to_datetime(data_df["Timestamp"]).dt.tz_localize("UTC").dt.tz_convert(tz)
+    return data_df
 
 
 def _data_interpolation(df):
