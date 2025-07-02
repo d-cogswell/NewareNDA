@@ -12,6 +12,7 @@ classifiers = [ "Programming Language :: Python :: 3" ]
 description = "Neware nda binary file reader."
 dependencies = [
   "pandas",
+  "polars",
   "importlib-metadata ~= 1.0 ; python_version < '3.8'"
 ]
 
