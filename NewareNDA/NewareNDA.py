@@ -6,11 +6,11 @@ import logging
 import mmap
 import os
 import struct
-from datetime import datetime, timezone
+from datetime import datetime
 
 import numpy as np
+import pandas as pd
 import polars as pl
-import tzlocal
 
 from .dicts import multiplier_dict, pl_dtype_dict, rec_columns, state_dict
 from .NewareNDAx import read_ndax
@@ -108,11 +108,6 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
     # Convert uts_s to Timestamp and replace Status ints with strings
     # Leave timezone localization to the end! Doing in polars then casting to pandas can cause kernel crashes
-    try:
-        tz = tzlocal.get_localzone_name()
-    except Exception:
-        logger.info("Could not get local timezone, using UTC.")
-        tz = "UTC"
     data_df = data_df.with_columns([
         _count_changes(pl.col("Step")).alias("Step"),
         pl.col("Time").round(3),  # Round to nearest ms
@@ -121,10 +116,13 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
         pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
     ])
 
+    # Keep only record columns
     data_df = data_df.select(rec_columns)
+    data_df = data_df.cast(pl_dtype_dict)
 
-    # Drop duplicate indexes
+    # Drop duplicate indexes and sort
     data_df = data_df.unique(subset="Index")
+    data_df = data_df.sort(by="Index")
 
     # Join temperature data
     if not aux_df.is_empty():
@@ -133,12 +131,13 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             aux_df = aux_df.pivot(index="Index", on="Aux", separator="")
         else:
             aux_df = aux_df.unique(subset=["Index"])
-        data_df = data_df.join(aux_df, on="Index")
+        data_df = data_df.join(aux_df, on="Index", how="left")
 
-    data_df = data_df.cast(pl_dtype_dict)
-    data_df = data_df.sort("Index")
+    # Convert to pandas, change timestamp to local timezone
     data_df = data_df.to_pandas()
-    data_df["Timestamp"] = data_df["Timestamp"].dt.tz_localize(tz, ambiguous="infer")
+
+    tz = datetime.now().astimezone().tzinfo
+    data_df["Timestamp"] = pd.to_datetime(data_df["Timestamp"]).dt.tz_localize("UTC").dt.tz_convert(tz)
     return data_df
 
 
