@@ -10,6 +10,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import numpy as np
@@ -79,34 +80,49 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         except Exception:
             pass
 
-        # Try to read data.ndc
-        if 'data.ndc' in zf.namelist():
-            data_file = zf.extract('data.ndc', path=tmpdir)
-            data_df = read_ndc(data_file)
-        else:
-            raise NotImplementedError("File type not yet supported!")
+        # Read all ndc files in parallel
+        files_to_read = ["data.ndc","data_runInfo.ndc", "data_step.ndc"]
+        aux_ids = {}
+        for f in zf.namelist():
+            # If the filename contains a channel number, convert to aux_id
+            m = re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f)
+            if m:
+                ch = int(m[1])
+                aux_ids[f] = aux_ch_dict[ch]
+                files_to_read.append(f)
+            else:
+                m = re.search(".*_([0-9]+)[.]ndc", f)
+                if m:
+                    aux_ids[f] = int(m[1])
+                    files_to_read.append(f)
 
-        # Some ndax have data spread across 3 different ndc files. Others have
-        # all data in data.ndc.
-        # Check if data_runInfo.ndc and data_step.ndc exist
-        if all(i in zf.namelist() for i in ['data_runInfo.ndc', 'data_step.ndc']):
+        # Extract and parse all of the .ndc files into dataframes in parallel
+        dfs = {}
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(extract_and_read_ndc, zf, fname, tmpdir): fname
+                for fname in files_to_read
+            }
+            for future in as_completed(futures):
+                fname, df = future.result()
+                if df is not None:
+                    dfs[fname] = df
 
-            # Read data from separate files
-            runInfo_file = zf.extract('data_runInfo.ndc', path=tmpdir)
-            step_file = zf.extract('data_step.ndc', path=tmpdir)
-            runInfo_df = read_ndc(runInfo_file)
-            step_df = read_ndc(step_file)
+        if "data.ndc" not in dfs:
+            msg = "File type not yet supported!"
+            raise NotImplementedError(msg)
 
-            # Merge dataframes
-            data_df = data_df.join(runInfo_df, how="left", on="Index")
-            data_df = data_df.with_columns([
-                pl.col("Step").forward_fill(),  # Forward fill Step column
-            ])
-            data_df = data_df.join(step_df, how="left", on="Step")
+        df = dfs["data.ndc"]
+
+        if "data_runInfo.ndc" in dfs:
+            df = df.join(dfs["data_runInfo.ndc"], how="left", on="Index")
+        if "data_step.ndc" in dfs:
+            df = df.with_columns([pl.col("Step").forward_fill()])
+            df = df.join(dfs["data_step.ndc"], how="left", on="Step")
 
         # Fill in missing data - Neware appears to fabricate data
-        if data_df["Time"].is_null().any():
-            data_df = _data_interpolation(data_df)
+        if df["Time"].is_null().any():
+            df = _data_interpolation(df)
 
         # Column calculations in parallel:
         # round time to ms, Status -> categories, uts -> Timestamp, software cycle number
@@ -114,43 +130,37 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             pl.col("Time").round(3),
             pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
         ]
-        if "uts" in data_df.columns:
+        if "uts" in df.columns:
             cols += [pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp")]
         if software_cycle_number:
-            cols += [pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode))]
+            cols += [pl.Series(name="Cycle", values=_generate_cycle_number(df, cycle_mode))]
 
-        data_df = data_df.with_columns(cols)
+        df = df.with_columns(cols)
 
         # Keep only record columns
-        data_df = data_df.select(rec_columns)
-        data_df = data_df.cast(pl_dtype_dict)
+        df = df.select(rec_columns)
+        df = df.cast(pl_dtype_dict)
 
-        # Read and merge Aux data from ndc files
-        for f in zf.namelist():
-
-            # If the filename contains a channel number, convert to aux_id
-            m = re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f)
-            if m:
-                ch = int(m[1])
-                aux_id = aux_ch_dict[ch]
-            else:
-                m = re.search(".*_([0-9]+)[.]ndc", f)
-                if m:
-                    aux_id = int(m[1])
-
-            if m:
-                aux_file = zf.extract(f, path=tmpdir)
-                aux = read_ndc(aux_file)
-                aux.cast({k:v for k,v in pl_aux_dtype_dict.items() if k in aux.columns})
-                aux = aux.rename({col: f"{col}{aux_id}" for col in aux.columns if col not in ["Index"]})
-                data_df = data_df.join(aux, how="left", on="Index")
+        # Merge the aux data if it exists
+        for f, aux_id in aux_ids.items():
+            if f not in dfs:
+                continue
+            aux_df = dfs[f].cast({k:v for k, v in pl_aux_dtype_dict.items() if k in dfs[f].columns})
+            aux_df = aux_df.rename({col: f"{col}{aux_id}" for col in aux_df.columns if col not in ["Index"]})
+            df = df.join(aux_df, how="left", on="Index")
 
     # Convert to pandas, change timestamp to local timezone
-    data_df = data_df.to_pandas().reset_index(drop=True)
+    df = df.to_pandas()
     tz = datetime.now().astimezone().tzinfo
-    data_df["Timestamp"] = pd.to_datetime(data_df["Timestamp"]).dt.tz_localize("UTC").dt.tz_convert(tz)
-    return data_df
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"]).dt.tz_localize("UTC").dt.tz_convert(tz)
+    return df
 
+def extract_and_read_ndc(zf: zipfile.ZipFile, filename: str, tmpdir: str) -> tuple[str, pd.DataFrame | None]:
+    """Extract .ndc from a zipfile and reads it into a DataFrame."""
+    if filename in zf.namelist():
+        file_path = zf.extract(filename, path=tmpdir)
+        return filename, read_ndc(file_path)
+    return filename, None
 
 def _data_interpolation(df):
     """
