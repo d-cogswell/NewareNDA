@@ -212,103 +212,122 @@ def read_ndc(file):
 
 
 def _read_ndc_2_filetype_1(mm):
-    record_len = 94
-    identifier = mm[517:525]
-
-    # Read data records
-    output = []
-    header = mm.find(identifier)
-    while header != -1:
-        mm.seek(header)
-        bytes = mm.read(record_len)
-        if bytes[0:1] == b'\x55':
-            output.append(_bytes_to_list_ndc(bytes))
-        else:
-            logger.warning("Unknown record type: "+bytes[0:1].hex())
-
-        header = mm.find(identifier, header + record_len)
-
-    # Postprocessing
-    df = pd.DataFrame(output, columns=rec_columns)
-
-    return df
+    dtype = np.dtype([  # 0
+        ("_pad1",  "V8"),  # 0-7
+        ("Index",  np.uint32),  # 8-11
+        ("Cycle",  np.uint32),  # 12-15
+        ("Step", np.uint8),  # 16
+        ("Status", np.uint8),  # 17
+        ("_pad2",  "V5"),  # 18-22
+        ("Time",   np.uint64), # 23-30
+        ("Voltage", np.int32), # 31-34
+        ("Current(mA)", np.int32), # 35-38
+        ("_pad3", "V4"), # 39-42
+        ("Charge_Capacity(mAh)", np.int64),  # 43-50
+        ("Discharge_Capacity(mAh)", np.int64),  # 51-58
+        ("Charge_Energy(mWh)", np.int64),  # 59-66
+        ("Discharge_Energy(mWh)", np.int64),  # 67-74
+        ("Y", np.uint16), # 75-76
+        ("M", np.uint8), # 77
+        ("D", np.uint8), # 78
+        ("h", np.uint8), # 79
+        ("m", np.uint8), # 80
+        ("s", np.uint8), # 81
+        ("Range", np.int32), # 82-85
+        ("_pad4", "V8"), # 86-93
+    ])
+    df = _read_ndc(mm, dtype, 5, 37, record_size = 512, file_header_size = 512).with_columns([
+        pl.col("Cycle") + 1,
+        pl.col("Time").cast(pl.Float32) * 1e-3,
+        pl.col("Voltage").cast(pl.Float32) * 1e-4,
+        pl.col("Range").replace_strict(multiplier_dict, return_dtype=pl.Float64).alias("Multiplier"),
+        pl.datetime(pl.col("Y"), pl.col("M"), pl.col("D"), pl.col("h"), pl.col("m"), pl.col("s")).alias("Timestamp"),
+    ])
+    df = df.with_columns([
+        pl.col("Current(mA)") * pl.col("Multiplier"),
+        (pl.col(
+            ["Charge_Capacity(mAh)", "Discharge_Capacity(mAh)", "Charge_Energy(mWh)", "Discharge_Energy(mWh)"],
+        ) * pl.col("Multiplier") / 3600).cast(pl.Float32),
+    ])
+    return df.drop(["Y", "M", "D", "h", "m", "s"])
 
 
 def _read_ndc_2_filetype_5(mm):
-    record_len = 94
-    identifier = mm[517:525]
-
-    # Read aux records
-    aux = []
-    header = mm.find(identifier)
-    while header != -1:
-        mm.seek(header)
-        bytes = mm.read(record_len)
-        if bytes[0:1] == b'\x65':
-            aux.append(_aux_bytes_65_to_list_ndc(bytes))
-        elif bytes[0:1] == b'\x74':
-            aux.append(_aux_bytes_74_to_list_ndc(bytes))
-        else:
-            logger.warning("Unknown record type: "+bytes[0:1].hex())
-
-        header = mm.find(identifier, header + record_len)
-
-    # Postprocessing
-    aux_df = pd.DataFrame([])
-    if identifier[0:1] == b'\x65':
-        aux_df = pd.DataFrame(aux, columns=['Index', 'Aux', 'V', 'T'])
-    elif identifier[0:1] == b'\x74':
-        aux_df = pd.DataFrame(aux, columns=['Index', 'Aux', 'V', 'T', 't'])
-
-    return aux_df
+    # This dtype is missing humudity % column - does not exist in current test data
+    dtype = np.dtype([
+        ("_pad2",  "V8"),  # 4-7
+        ("Index",  np.uint32), # 8-11
+        ("_pad3", "V19"),  # 12 - 30
+        ("V", np.int32),  # 31-34
+        ("_pad4", "V6"), # 35-40
+        ("T", np.int16),  # 41-42
+        ("t", np.int16),  # 43-44
+        ("_pad5", "V49"),  # 45-93
+    ])
+    return _read_ndc(mm, dtype, 5, 37, record_size = 512, file_header_size = 512).with_columns(
+        pl.col("V").cast(pl.Float32) / 10000,
+        pl.col("T").cast(pl.Float32) * 0.1,
+        pl.col("t").cast(pl.Float32) * 0.1,
+    )
 
 
 def _read_ndc_5_filetype_1(mm):
-    mm_size = mm.size()
-    record_len = 4096
-    header = 4096
-
-    # Read data records
-    output = []
-    mm.seek(header)
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<87s', bytes[125:-56]):
-            if i[0][7:8] == b'\x55':
-                output.append(_bytes_to_list_ndc(i[0]))
-
-    # Postprocessing
-    df = pd.DataFrame(output, columns=rec_columns)
-
-    return df
+    dtype = np.dtype([  # 0
+        ("_pad1",  "V8"),  # 0-7
+        ("Index",  np.uint32),  # 8-11
+        ("Cycle",  np.uint32),  # 12-15
+        ("Step", np.uint8),  # 16
+        ("Status", np.uint8),  # 17
+        ("_pad2",  "V5"),  # 18-22
+        ("Time",   np.uint64), # 23-30
+        ("Voltage", np.int32), # 31-34
+        ("Current(mA)", np.int32), # 35-38
+        ("_pad3", "V4"), # 39-42
+        ("Charge_Capacity(mAh)", np.int64),  # 43-50
+        ("Discharge_Capacity(mAh)", np.int64),  # 51-58
+        ("Charge_Energy(mWh)", np.int64),  # 59-66
+        ("Discharge_Energy(mWh)", np.int64),  # 67-74
+        ("Y", np.uint16), # 75-76
+        ("M", np.uint8), # 77
+        ("D", np.uint8), # 78
+        ("h", np.uint8), # 79
+        ("m", np.uint8), # 80
+        ("s", np.uint8), # 81
+        ("Range", np.int32), # 82-85
+        ("_pad4", "V1"), # 86
+    ])
+    df = _read_ndc(mm, dtype, 125, 56).with_columns([
+        pl.col("Cycle") + 1,
+        pl.col("Time").cast(pl.Float32) * 1e-3,
+        pl.col("Voltage").cast(pl.Float32) * 1e-4,
+        pl.col("Range").replace_strict(multiplier_dict, return_dtype=pl.Float64).alias("Multiplier"),
+        pl.datetime(pl.col("Y"), pl.col("M"), pl.col("D"), pl.col("h"), pl.col("m"), pl.col("s")).alias("Timestamp"),
+    ])
+    df = df.with_columns([
+        pl.col("Current(mA)") * pl.col("Multiplier"),
+        (pl.col(
+            ["Charge_Capacity(mAh)", "Discharge_Capacity(mAh)", "Charge_Energy(mWh)", "Discharge_Energy(mWh)"],
+        ) * pl.col("Multiplier") / 3600).cast(pl.Float32),
+    ])
+    return df.drop(["Y", "M", "D", "h", "m", "s"])
 
 
 def _read_ndc_5_filetype_5(mm):
-    mm_size = mm.size()
-    record_len = 4096
-    header = 4096
-
-    # Read aux records
-    aux65 = []
-    aux74 = []
-    mm.seek(header)
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<87s', bytes[125:-56]):
-            if i[0][7:8] == b'\x65':
-                aux65.append(_aux_bytes_65_to_list_ndc(i[0]))
-            elif i[0][7:8] == b'\x74':
-                aux74.append(_aux_bytes_74_to_list_ndc(i[0]))
-
-    # Concat aux65 and aux74 if they both contain data
-    aux_df = pd.DataFrame(aux65, columns=['Index', 'Aux', 'V', 'T'])
-    aux74_df = pd.DataFrame(aux74, columns=['Index', 'Aux', 'V', 'T', 't'])
-    if (not aux_df.empty) & (not aux74_df.empty):
-        aux_df = pd.concat([aux_df, aux74_df.drop(columns=['t'])])
-    elif (not aux74_df.empty):
-        aux_df = aux74_df
-
-    return aux_df
+    dtype = np.dtype([
+        ("_pad2",  "V8"),  # 4-7
+        ("Index",  np.uint32), # 8-11
+        ("_pad3", "V19"),  # 12 - 30
+        ("V", np.int32),  # 31-34
+        ("_pad4", "V6"), # 35-40
+        ("T", np.int16),  # 41-42
+        ("t", np.int16),  # 43-44
+        ("_pad5", "V42"),  # 45-86
+    ])
+    return _read_ndc(mm, dtype, 125, 56).with_columns(
+        pl.col("V").cast(pl.Float32) * 1e-4,
+        pl.col("T").cast(pl.Float32) * 0.1,
+        pl.col("t").cast(pl.Float32) * 0.1,
+    )
 
 
 def _read_ndc_11_filetype_1(mm):
@@ -323,7 +342,8 @@ def _read_ndc_11_filetype_1(mm):
 
 def _read_ndc_11_filetype_5(mm):
     header = 4096
-    if mm[header+132:header+133] == b'\x65':
+
+    if mm[header+132:header+133] == b"\x65":
         dtype = np.dtype([
             ("_pad1", "V1"),
             ("V", "<f4"),
@@ -335,8 +355,7 @@ def _read_ndc_11_filetype_5(mm):
             pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
         ])
 
-
-    elif mm[header+132:header+133] == b'\x74':
+    if mm[header+132:header+133] == b"\x74":
         dtype = np.dtype([
             ("_pad1", "V1"),
             ("Index", "<i4"),
@@ -522,55 +541,3 @@ def _read_ndc(
             pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
         ])
     return pl.DataFrame(arr)
-
-
-
-def _bytes_to_list_ndc(bytes):
-    """Helper function for interpreting an ndc byte string"""
-
-    # Extract fields from byte string
-    [Index, Cycle, Step, Status] = struct.unpack('<IIBB', bytes[8:18])
-    [Time, Voltage, Current] = struct.unpack('<Qii', bytes[23:39])
-    [Charge_capacity, Discharge_capacity,
-     Charge_energy, Discharge_energy] = struct.unpack('<qqqq', bytes[43:75])
-    [Y, M, D, h, m, s] = struct.unpack('<HBBBBB', bytes[75:82])
-    [Range] = struct.unpack('<i', bytes[82:86])
-
-    multiplier = multiplier_dict[Range]
-
-    # Create a record
-    list = [
-        Index,
-        Cycle + 1,
-        Step,
-        state_dict[Status],
-        Time/1000,
-        Voltage/10000,
-        Current*multiplier,
-        Charge_capacity*multiplier/3600,
-        Discharge_capacity*multiplier/3600,
-        Charge_energy*multiplier/3600,
-        Discharge_energy*multiplier/3600,
-        datetime(Y, M, D, h, m, s)
-    ]
-    return list
-
-
-def _aux_bytes_65_to_list_ndc(bytes):
-    """Helper function for intepreting auxiliary records"""
-    [Aux] = struct.unpack('<B', bytes[3:4])
-    [Index] = struct.unpack('<I', bytes[8:12])
-    [T] = struct.unpack('<h', bytes[41:43])
-    [V] = struct.unpack('<i', bytes[31:35])
-
-    return [Index, Aux, V/10000, T/10]
-
-
-def _aux_bytes_74_to_list_ndc(bytes):
-    """Helper function for intepreting auxiliary records"""
-    [Aux] = struct.unpack('<B', bytes[3:4])
-    [Index] = struct.unpack('<I', bytes[8:12])
-    [V] = struct.unpack('<i', bytes[31:35])
-    [T, t] = struct.unpack('<hh', bytes[41:45])
-
-    return [Index, Aux, V/10000, T/10, t/10]
