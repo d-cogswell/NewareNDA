@@ -200,17 +200,15 @@ def read_ndc(file):
         df (pd.DataFrame): DataFrame containing all records in the file
         aux_df (pd.DataFrame): DataFrame containing any temperature data
     """
-    with open(file, 'rb') as f:
-        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-
-            # Get ndc file version and filetype
-            [ndc_filetype] = struct.unpack('<B', mm[0:1])
-            [ndc_version] = struct.unpack('<B', mm[2:3])
-            try:
-                f = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
-                return f(mm)
-            except AttributeError:
-                raise NotImplementedError(f"ndc version {ndc_version} filetype {ndc_filetype} is not yet supported!")
+    with open(file, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        # Get ndc file version and filetype
+        [ndc_filetype] = struct.unpack("<B", mm[0:1])
+        [ndc_version] = struct.unpack("<B", mm[2:3])
+        try:
+            func = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
+            return func(mm)
+        except AttributeError:
+            raise NotImplementedError(f"ndc version {ndc_version} filetype {ndc_filetype} is not yet supported!")
 
 
 def _read_ndc_2_filetype_1(mm):
