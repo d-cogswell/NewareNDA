@@ -80,7 +80,6 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
         # Get the file version
         [nda_version] = struct.unpack('<B', mm[14:15])
-        logger.warning(f"NDA version: {nda_version}")
 
         # Try to find server and client version info
         version_loc = mm.find(b'BTSServer')
