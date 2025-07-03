@@ -1,0 +1,1 @@
+*.py -text  # Do not do CRLF-LF conversion on Python files
