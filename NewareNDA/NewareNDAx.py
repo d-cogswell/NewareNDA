@@ -76,7 +76,6 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
             for child in config.find("TestInfo"):
                 aux_ch_dict.update({int(child.attrib['RealChlID']): int(child.attrib['AuxID'])})
-
         except Exception:
             pass
 
@@ -109,13 +108,18 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         if data_df["Time"].is_null().any():
             data_df = _data_interpolation(data_df)
 
-        # Convert uts_s to timezone aware Timestamp and replace Status ints with strings
-        data_df = data_df.with_columns([
-            pl.col("Time").round(3),  # Round to nearest ms
-            pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp"),
+        # Column calculations in parallel:
+        # round time to ms, Status -> categories, uts -> Timestamp, software cycle number
+        cols = [
+            pl.col("Time").round(3),
             pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
-            pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
-        ])
+        ]
+        if "uts" in data_df.columns:
+            cols += [pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp")]
+        if software_cycle_number:
+            cols += [pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode))]
+
+        data_df = data_df.with_columns(cols)
 
         # Keep only record columns
         data_df = data_df.select(rec_columns)
