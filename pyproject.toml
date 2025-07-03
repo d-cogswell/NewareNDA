@@ -13,6 +13,7 @@ description = "Neware nda binary file reader."
 dependencies = [
   "pandas",
   "polars",
+  "pyarrow",
   "importlib-metadata ~= 1.0 ; python_version < '3.8'"
 ]
 
