@@ -120,7 +120,7 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             df = df.with_columns([pl.col("Step").forward_fill()])
             df = df.join(dfs["data_step.ndc"], how="left", on="Step")
 
-        # Fill in missing data - Neware appears to fabricate data
+        # Interpolate missing data if necessary
         if df["Time"].is_null().any():
             df = _data_interpolation(df)
 
