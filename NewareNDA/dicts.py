@@ -30,20 +30,6 @@ state_dict = {
 
 # Define precision of fields
 dtype_dict = {
-    'Index': 'uint32',
-    'Cycle': 'uint16',
-    'Step': 'uint32',
-    'Status': 'category',
-    'Time': 'float32',
-    'Voltage': 'float32',
-    'Current(mA)': 'float32',
-    'Charge_Capacity(mAh)': 'float32',
-    'Discharge_Capacity(mAh)': 'float32',
-    'Charge_Energy(mWh)': 'float32',
-    'Discharge_Energy(mWh)': 'float32'
-}
-
-pl_dtype_dict = {
     'Index': pl.UInt32,
     'Cycle': pl.UInt32,
     'Step': pl.UInt32,
@@ -55,19 +41,6 @@ pl_dtype_dict = {
     'Discharge_Capacity(mAh)': pl.Float32,
     'Charge_Energy(mWh)': pl.Float32,
     'Discharge_Energy(mWh)': pl.Float32,
-}
-
-aux_dtype_dict = {
-    'V': 'float32',
-    'T': 'float32',
-    't': 'float32'
-}
-
-pl_aux_dtype_dict = {
-    'Index': pl.UInt32,
-    'V': pl.Float32,
-    'T': pl.Float32,
-    't': pl.Float32,
 }
 
 
@@ -119,4 +92,11 @@ multiplier_dict = {
     60000: 1e-1,
     100000: 1e-1,
     200000: 1e-1,
+}
+
+# Renaming aux columns by ChlType
+aux_chl_type_columns = {
+    103: "T",
+    335: "t",
+    345: "H",
 }

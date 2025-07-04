@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from .dicts import multiplier_dict, pl_dtype_dict, rec_columns, state_dict
+from .dicts import multiplier_dict, dtype_dict, rec_columns, state_dict
 from .NewareNDAx import read_ndax
 from .utils import _count_changes, _generate_cycle_number
 
@@ -117,7 +117,7 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
 
     # Keep only record columns
     data_df = data_df.select(rec_columns)
-    data_df = data_df.cast(pl_dtype_dict)
+    data_df = data_df.cast(dtype_dict)
 
     # Drop duplicate indexes and sort
     data_df = data_df.unique(subset="Index")

@@ -19,10 +19,10 @@ import polars as pl
 
 from .dicts import (
     multiplier_dict,
-    pl_aux_dtype_dict,
-    pl_dtype_dict,
+    dtype_dict,
     rec_columns,
     state_dict,
+    aux_chl_type_columns,
 )
 from .utils import _count_changes, _generate_cycle_number
 
@@ -68,33 +68,29 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         except Exception:
             pass
 
-        # Read aux channel mapping from TestInfo.xml
-        aux_ch_dict = {}
-        try:
+        # Find all auxiliary channel files
+        aux_filenames = []
+        for f in zf.namelist():
+            if re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f) or re.search(".*_([0-9]+)[.]ndc", f):
+                aux_filenames.append(f)
+        files_to_read = ["data.ndc","data_runInfo.ndc", "data_step.ndc"] + aux_filenames.copy()  # aux filenames are popped later
+
+        # Find all auxiliary channel dicts in TestInfo.xml
+        aux_dicts = []
+        if aux_filenames:
             step = zf.extract('TestInfo.xml', path=tmpdir)
             with open(step, 'r', encoding='gb2312') as f:
                 config = ET.fromstring(f.read()).find('config')
-
             for child in config.find("TestInfo"):
-                aux_ch_dict.update({int(child.attrib['RealChlID']): int(child.attrib['AuxID'])})
-        except Exception:
-            pass
+                if "aux" in child.tag.lower():
+                    aux_dicts.append({k: int(v) if v.isdigit() else v for k, v in child.attrib.items()})
 
-        # Read all ndc files in parallel
-        files_to_read = ["data.ndc","data_runInfo.ndc", "data_step.ndc"]
-        aux_ids = {}
-        for f in zf.namelist():
-            # If the filename contains a channel number, convert to aux_id
-            m = re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f)
-            if m:
-                ch = int(m[1])
-                aux_ids[f] = aux_ch_dict[ch]
-                files_to_read.append(f)
-            else:
-                m = re.search(".*_([0-9]+)[.]ndc", f)
-                if m:
-                    aux_ids[f] = int(m[1])
-                    files_to_read.append(f)
+        # ASSUME channel files are in the same order as TestInfo.xml, map filenames to dicts
+        if len(aux_dicts) == len(aux_filenames):
+            aux_ch_dict = {f: d for f, d in zip(aux_filenames, aux_dicts)}
+        else:
+            aux_ch_dict = {}
+            logger.critical("Found a different number of aux channels in files and TestInfo.xml!")
 
         # Extract and parse all of the .ndc files into dataframes in parallel
         dfs = {}
@@ -139,14 +135,24 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
         # Keep only record columns
         df = df.select(rec_columns)
-        df = df.cast(pl_dtype_dict)
-
+        df = df.cast(dtype_dict)
+        
         # Merge the aux data if it exists
-        for f, aux_id in aux_ids.items():
+        for i, (f, aux_dict) in enumerate(aux_ch_dict.items()):
             if f not in dfs:
                 continue
-            aux_df = dfs[f].cast({k:v for k, v in pl_aux_dtype_dict.items() if k in dfs[f].columns})
-            aux_df = aux_df.rename({col: f"{col}{aux_id}" for col in aux_df.columns if col not in ["Index"]})
+            else:
+                aux_df = dfs[f]
+
+            # Get aux ID, use -i if not present to avoid conflicts
+            aux_id = aux_dict.get("AuxID", -i)
+
+            # If ? column exists, rename name by ChlType (T, t, H)
+            if "?" in aux_df.columns and aux_dict.get("ChlType") in aux_chl_type_columns:
+                col = aux_chl_type_columns[aux_dict["ChlType"]]
+                aux_df = aux_df.rename({"?": f"{col}{aux_id}"})
+            else:  # Otherwise just append aux ID to column names
+                aux_df = aux_df.rename({col: f"{col}{aux_id}" for col in aux_df.columns if col not in ["Index"]})
             df = df.join(aux_df, how="left", on="Index")
 
     # Convert to pandas, change timestamp to local timezone
@@ -432,7 +438,7 @@ def _read_ndc_14_filetype_1(mm):
 
 def _read_ndc_14_filetype_5(mm):
     dtype = np.dtype([
-        ("T", "<f4"),
+        ("?", "<f4"),  # Column name is assigned later from TestInfo.xml
     ])
     return _read_ndc(mm, dtype, 132, 4).with_columns([
         pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
