@@ -1,7 +1,6 @@
 import logging
 import numpy as np
 from .dicts import state_dict
-import polars as pl
 
 logger = logging.getLogger('newarenda')
 
@@ -50,7 +49,6 @@ def _generate_cycle_number(df, cycle_mode='chg'):
 def _count_changes(series):
     """Enumerate the number of value changes in a series"""
     return series.diff().fill_null(1).abs().gt(0).cum_sum()
-
 
 
 def _id_first_state(df):
