@@ -137,7 +137,7 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             logger.info("未找到 BTS 版本！")
 
         # 版本特定设置
-        # print(f"nda_version == {nda_version}")
+        print(f"nda_version == {nda_version}")
         if nda_version == 8: # 8 基于 29 改
             output, aux = _read_nda_8(mm)
         elif nda_version == 22: # 22 基于 29 改

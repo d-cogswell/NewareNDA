@@ -1,6 +1,7 @@
 __pycache__/
 build/
 NewareNDA.egg-info/
+old/
 *.nda
 *.ndax
 *.csv
