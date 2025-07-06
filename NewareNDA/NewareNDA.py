@@ -336,7 +336,17 @@ def _bytes_to_list_8(bytes, fallback_index=0):
         3: 'CV_DChg',
         4: 'CC_DChg',
     }
-    Status = v8_state_dict.get(Status_code, state_dict.get(Status_code, f'Unknown_{Status_code}'))
+
+    # 首先尝试从 v8_state_dict 中获取状态，如果不存在则从 state_dict 中获取
+    # 如果都不存在，则抛出 KeyError
+    try:
+        Status = v8_state_dict[Status_code]
+    except KeyError:
+        try:
+            Status = state_dict[Status_code]
+        except KeyError:
+            logger.error(f"未知状态码 {Status_code} 在 nda v8 文件中")
+            raise KeyError(f"未知状态码 {Status_code} 在 nda v8 文件中")
 
     # 时间戳占位；稍后在 _read_nda_8 中使用开始时间计算
     timestamp = None
@@ -748,7 +758,7 @@ def _bytes_to_list_22(bytes):
         Index,
         Cycle + 1,
         Step,
-        state_dict.get(Status, f'Unknown_{Status}'),
+        state_dict[Status],
         Time/1000,
         Voltage/10000,
         Current*multiplier,
@@ -808,7 +818,7 @@ def _bytes_to_list_23(bytes):
         Index,
         Cycle + 1,
         Step,
-        state_dict.get(Status, f'Unknown_{Status}'),
+        state_dict[Status],
         Time/1000,
         Voltage/10000,
         Current*multiplier,
