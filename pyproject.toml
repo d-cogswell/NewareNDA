@@ -4,7 +4,8 @@
 [project]
 name = "NewareNDA"
 dynamic = ["version"]
-license = { file = "LICENSE" }
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Dan Cogswell", email = "cogswell@alum.mit.edu" }]
 requires-python = ">=3.6"
