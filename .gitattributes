@@ -1,2 +1,2 @@
-# Do not do CRLF-LF conversion on Python files
-*.py -text
+# Normalize line endings to LF on commit
+* text=auto
