@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from .dicts import multiplier_dict, dtype_dict, rec_columns, state_dict
+from .dicts import dtype_dict, multiplier_dict, rec_columns, state_dict
 from .NewareNDAx import read_ndax
 from .utils import _count_changes, _generate_cycle_number
 

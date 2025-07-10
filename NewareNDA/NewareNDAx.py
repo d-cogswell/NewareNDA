@@ -18,11 +18,11 @@ import pandas as pd
 import polars as pl
 
 from .dicts import (
-    multiplier_dict,
+    aux_chl_type_columns,
     dtype_dict,
+    multiplier_dict,
     rec_columns,
     state_dict,
-    aux_chl_type_columns,
 )
 from .utils import _count_changes, _generate_cycle_number
 
