@@ -194,16 +194,31 @@ def _data_interpolation(df):
 
     df = df.with_columns([
         (pl.col("dt").cum_sum().over("group_idx") * (~pl.col("nan_mask"))).alias("cdt"),
-        (pl.col("dt") * pl.col("Current(mA)") / 3600).cum_sum().over("group_idx").alias("capacity"),
+        (
+            (pl.col("dt") * pl.col("Current(mA)") / 3600)
+            .cum_sum().over("group_idx") * ~pl.col("nan_mask")
+        ).alias("inc_capacity"),
+        (
+            (pl.col("dt") * pl.col("Voltage") * pl.col("Current(mA)") / 3600)
+            .cum_sum().over("group_idx") * ~pl.col("nan_mask")
+        ).alias("inc_energy"),
     ])
 
     df = df.with_columns([
         (pl.col("Time") + pl.col("cdt")).alias("Time"),
         (pl.col("uts") + pl.col("cdt")).alias("uts"),
-        (pl.col("Charge_Capacity(mAh)") + pl.col("capacity").clip(lower_bound=0)).alias("Charge_Capacity(mAh)"),
-        (pl.col("Discharge_Capacity(mAh)") + pl.col("capacity").clip(upper_bound=0)).alias("Discharge_Capacity(mAh)"),
-        (pl.col("Charge_Energy(mWh)") + pl.col("capacity").clip(lower_bound=0) * pl.col("Voltage")).alias("Charge_Energy(mWh)"),
-        (pl.col("Discharge_Energy(mWh)") + pl.col("capacity").clip(upper_bound=0) * pl.col("Voltage")).alias("Discharge_Energy(mWh)"),
+        (
+            pl.col("Charge_Capacity(mAh)") + pl.col("inc_capacity").clip(lower_bound=0)
+        ).alias("Charge_Capacity(mAh)"),
+        (
+            pl.col("Discharge_Capacity(mAh)") + pl.col("inc_capacity").clip(upper_bound=0)
+        ).alias("Discharge_Capacity(mAh)"),
+        (
+            pl.col("Charge_Energy(mWh)") + pl.col("inc_energy").clip(lower_bound=0)
+        ).alias("Charge_Energy(mWh)"),
+        (
+            pl.col("Discharge_Energy(mWh)") + pl.col("inc_energy").clip(upper_bound=0)
+        ).alias("Discharge_Energy(mWh)"),
     ])
 
     # Sanity checks
