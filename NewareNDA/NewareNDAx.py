@@ -208,16 +208,16 @@ def _data_interpolation(df):
         (pl.col("Time") + pl.col("cdt")).alias("Time"),
         (pl.col("uts") + pl.col("cdt")).alias("uts"),
         (
-            pl.col("Charge_Capacity(mAh)") + pl.col("inc_capacity").clip(lower_bound=0)
+            pl.col("Charge_Capacity(mAh)").abs() + pl.col("inc_capacity").clip(lower_bound=0).abs()
         ).alias("Charge_Capacity(mAh)"),
         (
-            pl.col("Discharge_Capacity(mAh)") + pl.col("inc_capacity").clip(upper_bound=0)
+            pl.col("Discharge_Capacity(mAh)").abs() + pl.col("inc_capacity").clip(upper_bound=0).abs()
         ).alias("Discharge_Capacity(mAh)"),
         (
-            pl.col("Charge_Energy(mWh)") + pl.col("inc_energy").clip(lower_bound=0)
+            pl.col("Charge_Energy(mWh)").abs() + pl.col("inc_energy").clip(lower_bound=0).abs()
         ).alias("Charge_Energy(mWh)"),
         (
-            pl.col("Discharge_Energy(mWh)") + pl.col("inc_energy").clip(upper_bound=0)
+            pl.col("Discharge_Energy(mWh)").abs() + pl.col("inc_energy").clip(upper_bound=0).abs()
         ).alias("Discharge_Energy(mWh)"),
     ])
 
