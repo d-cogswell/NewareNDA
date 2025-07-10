@@ -481,6 +481,7 @@ def _read_ndc_14_filetype_7(mm):
         ("_pad2", "V12"),
     ])
     return _read_ndc(mm, dtype, 132, 5).with_columns([
+        pl.col("Cycle") + 1,
         pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Step"),
     ])
 
