@@ -409,7 +409,7 @@ def _read_ndc_11_filetype_5(mm):
         ])
         return _read_ndc(mm, dtype, 132, 4).with_columns([
             pl.col("T").cast(pl.Float32) * 0.1,  # 0.1'C -> 'C
-        ])
+        ]).drop("Aux")  # Aux channel inferred from TestInfo.xml
 
     msg = "Unknown file structure for ndc version 11 filetype 5."
     raise NotImplementedError(msg)
