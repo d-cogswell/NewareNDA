@@ -136,7 +136,7 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         # Keep only record columns
         df = df.select(rec_columns)
         df = df.cast(dtype_dict)
-        
+
         # Merge the aux data if it exists
         for i, (f, aux_dict) in enumerate(aux_ch_dict.items()):
             if f not in dfs:
@@ -361,12 +361,12 @@ def _read_ndc_11_filetype_5(mm):
 
     if mm[header+132:header+133] == b"\x65":
         dtype = np.dtype([
-            ("_pad1", "V1"),
+            ("mask", "<i1"),
             ("V", "<f4"),
             ("T", "<i2"),
         ])
-        return _read_ndc(mm, dtype, 132, 2).with_columns([
-            pl.col("V") * 1e-4,  # 0.1
+        return _read_ndc(mm, dtype, 132, 2, mask=101).with_columns([
+            pl.col("V") * 1e-4,  # 0.1 mV -> V
             pl.col("T").cast(pl.Float32) * 0.1,  # 0.1'C -> 'C
             pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
         ])
@@ -533,7 +533,24 @@ def _read_ndc(
     record_footer_size: int,
     record_size: int = 4096,
     file_header_size: int = 4096,
+    mask: int | None = None,
 ):
+    """Read ndc file into a polars DataFrame.
+
+    Args:
+        mm (mmap.mmap): Memory-mapped file object.
+        dtype (np.dtype): Numpy dtype describing the record structure.
+        record_header_size (int): Size of the record header in bytes.
+        record_footer_size (int): Size of the record footer in bytes.
+        record_size (int): Total size of a single record in bytes.
+        file_header_size (int): Size of the file header in bytes.
+        mask (int | None): Optional mask to filter, assumes a column named
+            "mask" and keeps rows where "mask" equals this value.
+
+    Returns:
+        pl.DataFrame: Polars DataFrame containing the records.
+
+    """
     # Read entire file into 1 byte array nrecords x record_size
     num_records = (len(mm)-file_header_size) // record_size
     arr = np.frombuffer(mm[file_header_size:], dtype=np.int8).reshape((num_records, record_size))
@@ -545,15 +562,27 @@ def _read_ndc(
     arr = arr.view(dtype=dtype_no_pad)
     # Flatten
     arr = arr.reshape(-1)
-    if "Index" in arr.dtype.names:  # Remove 0 index rows for runInfo/step files
+
+    # If a mask is provided, filter the array
+    if mask is not None and "mask" in arr.dtype.names:
+        arr = arr[arr["mask"] == mask]
+        return pl.DataFrame(arr).drop("mask")
+
+    # If runInfo file, remove 0 index rows
+    if "Index" in arr.dtype.names:
         arr = arr[arr["Index"] != 0]
         return pl.DataFrame(arr)
-    if "Step_Index" in arr.dtype.names:  # Remove 0 step rows for step files
+
+    # If step file, remove 0 step index rows
+    if "Step_Index" in arr.dtype.names:
         arr = arr[arr["Step_Index"] != 0]
         return pl.DataFrame(arr)
-    if "Voltage" in arr.dtype.names:  # Add index column for data files
+
+    # If data file, remove 0.0 voltage rows and add Index column
+    if "Voltage" in arr.dtype.names:
         arr = arr[arr["Voltage"] != 0]
         return pl.DataFrame(arr).with_columns([
             pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
         ])
+
     return pl.DataFrame(arr)
