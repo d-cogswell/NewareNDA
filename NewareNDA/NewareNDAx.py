@@ -69,11 +69,21 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             pass
 
         # Find all auxiliary channel files
-        aux_filenames = []
+        # Auxiliary files files need to be matched to entries in TestInfo.xml
+        # Sort by the numbers in the filename, assume same order in TestInfo.xml
+        aux_data = []
         for f in zf.namelist():
-            if re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f) or re.search(".*_([0-9]+)[.]ndc", f):
-                aux_filenames.append(f)
-        files_to_read = ["data.ndc","data_runInfo.ndc", "data_step.ndc"] + aux_filenames.copy()  # aux filenames are popped later
+            m = re.search(r"data_AUX_(\d+)_(\d+)_(\d+)\.ndc", f)
+            if m:
+                aux_data.append((f, list(map(int, m.groups()))))
+            else:
+                m = re.search(r".*_(\d+)\.ndc", f)
+                if m:
+                    aux_data.append((f, [int(m.group(1)), 0, 0]))
+
+        # Sort by the three integers
+        aux_data.sort(key=lambda x: x[1])
+        aux_filenames = [f for f, _ in aux_data]
 
         # Find all auxiliary channel dicts in TestInfo.xml
         aux_dicts = []
@@ -93,6 +103,7 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             logger.critical("Found a different number of aux channels in files and TestInfo.xml!")
 
         # Extract and parse all of the .ndc files into dataframes in parallel
+        files_to_read = ["data.ndc", "data_runInfo.ndc", "data_step.ndc", *aux_filenames]
         dfs = {}
         with ThreadPoolExecutor() as executor:
             futures = {
