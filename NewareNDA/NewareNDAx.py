@@ -128,8 +128,19 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
     if software_cycle_number:
         data_df['Cycle'] = _generate_cycle_number(data_df, cycle_mode)
+    
+    data_df = data_df.astype(dtype=dtype_dict)
 
-    return data_df.astype(dtype=dtype_dict)
+    # 按照要求，统一输出指定的列
+    desired_columns = [
+        'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
+        'Current(mA)', 'Timestamp'
+    ]
+    # 过滤掉不存在于 df 中的列
+    existing_columns = [col for col in desired_columns if col in data_df.columns]
+    data_df = data_df[existing_columns]
+
+    return data_df
 
 
 def _data_interpolation(df):

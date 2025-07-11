@@ -5,14 +5,14 @@ logger = logging.getLogger('newarenda')
 
 def _generate_cycle_number(df, cycle_mode='chg'):
     """
-    Generate a cycle number to match Neware.
+    Generate cycle numbers matching Neware.
 
-    cycle_mode = chg: (Default) Sets new cycles with a Charge step following a Discharge.
-        dchg: Sets new cycles with a Discharge step following a Charge.
-        auto: Identifies the first non-rest state as the incremental state.
+    cycle_mode = chg: (default) Set new cycle at charge step after discharge.
+        dchg: Set new cycle at discharge step after charge.
+        auto: Identify the first non-rest state as the increment state.
     """
 
-    # Auto: find the first non rest cycle
+    # Auto: find the first non-rest cycle
     if cycle_mode.lower() == 'auto':
         cycle_mode = _id_first_state(df)
 
@@ -65,14 +65,14 @@ def _generate_cycle_number(df, cycle_mode='chg'):
 
 
 def _count_changes(series):
-    """Enumerate the number of value changes in a series"""
+    """Count the number of value changes in a series"""
     a = series.diff()
     a.iloc[0] = 1
     return (abs(a) > 0).cumsum()
 
 
 def _id_first_state(df):
-    """Helper function to identify the first non-rest state in a cycling profile"""
+    """Helper function to identify the first non-rest state in the cycle profile"""
     nonrest_states = df[df['Status'] != 'Rest']['Status']
 
     # If no non-rest cycles exist, just pick a mode; it doesn't matter.

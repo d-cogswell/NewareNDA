@@ -1,10 +1,10 @@
-# Names for data fields
+# Data field names
 rec_columns = [
     'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
     'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
     'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp']
 
-# Define precision of fields
+# Define field precision
 dtype_dict = {
     'Index': 'uint32',
     'Cycle': 'uint16',
@@ -25,29 +25,29 @@ aux_dtype_dict = {
     't': 'float32'
 }
 
-# Dictionary mapping Status integer to string
+# Dictionary mapping state integers to strings
 state_dict = {
-    1: 'CC_Chg',
-    2: 'CC_DChg',
-    3: 'CV_Chg',
-    4: 'Rest',
-    5: 'Cycle',
-    7: 'CCCV_Chg',
-    8: 'CP_DChg',
-    9: 'CP_Chg',
-    10: 'CR_DChg',
-    13: 'Pause',
-    16: 'Pulse',
-    17: 'SIM',
-    19: 'CV_DChg',
-    20: 'CCCV_DChg',
-    21: 'Control',
-    22: 'OCV',
-    26: 'CPCV_DChg',
-    27: 'CPCV_Chg'
+    1: 'CC_Chg',        # Constant current charging: fast charging the battery from low SOC with a fixed current
+    2: 'CC_DChg',       # Constant current discharging: basic discharging method for capacity testing and rate performance testing
+    3: 'CV_Chg',        # Constant voltage charging: voltage maintained at the upper limit, current decays with polarization to ensure no lithium precipitation due to overvoltage
+    4: 'Rest',          # Resting/open circuit rest: asymptotic thermal-electrochemical equilibrium, used to measure OCV or eliminate polarization
+    5: 'Cycle',         # Cycle: repeats a set of steps N times as set, statistics capacity decay, Coulomb efficiency, etc.
+    7: 'CCCV_Chg',      # Constant current-constant voltage charging: industry standard CC→CV two-stage charging curve
+    8: 'CP_DChg',       # Constant power discharging: loading with fixed power to evaluate the thermal-electrical coupling behavior of energy-type batteries under power-type conditions
+    9: 'CP_Chg',        # Constant power charging: fast energy replenishment with fixed power, mostly used for high-power EV verification
+    10: 'CR_DChg',      # Constant resistance discharging: examines current-power changes in voltage decay through a fixed load resistance
+    13: 'Pause',        # Pause: manual/script temporary stop, not counted in capacity; convenient for changing lines or changing step sequences
+    16: 'Pulse',        # Pulse: typical such as HPPC test, seconds of discharge/recharge pulse + rest, extract parameters such as Rs, τ
+    17: 'SIM',          # Condition simulation: import driving or load waveform files, reproduce the real power curve in time series
+    19: 'CV_DChg',      # Constant voltage discharging: constant voltage "pulling current" to the cell until reaching the cut-off current, mostly seen in material research or BMS failure protection scenarios
+    20: 'CCCV_DChg',    # Constant current-constant voltage discharging: first set I to pull to the lower limit voltage, then constant voltage to pull small current, simulating the "power-down hold" process of power devices
+    21: 'Control',      # Control/conditional jump: change the process according to IF/DO conditions (such as voltage threshold, time, temperature)
+    22: 'OCV',          # Open circuit voltage sampling: measure Voc after long rest, essential in SoC modeling and aging diagnosis
+    26: 'CPCV_DChg',    # Constant power-constant voltage discharging: first equal power output, turn to CV after voltage touches threshold, avoid over-discharge and maintain power stability
+    27: 'CPCV_Chg'      # Constant power-constant voltage charging: use CV to finish after the power stage, which can efficiently fast charge and reduce thermal stress in the final stage
 }
 
-# Define field scaling based on instrument Range setting
+# Define field scaling based on instrument range settings
 multiplier_dict = {
     -100000000: 10,
     -200000: 1e-2,
