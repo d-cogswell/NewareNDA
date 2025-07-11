@@ -1,14 +1,15 @@
-This is a forked version of the NewareNDA library.
-It supports reading v8, v22, v23, v26, v28 versions of nda files.
-It has improved the robustness of file parsing.
 
+[![release](https://img.shields.io/github/v/release/d-cogswell/NewareNDA)](https://github.com/d-cogswell/NewareNDA/releases)
+[![NewareNDA regression tests](https://github.com/d-cogswell/NewareNDA/actions/workflows/NewareNDA_pytest.yml/badge.svg)](https://github.com/d-cogswell/NewareNDA/actions/workflows/NewareNDA_pytest.yml)
+[![Coverage Status](https://coveralls.io/repos/github/d-cogswell/NewareNDA/badge.svg?branch=development)](https://coveralls.io/github/d-cogswell/NewareNDA?branch=development)
 # NewareNDA
 
 © 2022-2024 Copyright SES AI
-<br>Original Author: [Daniel Cogswell](https://github.com/Solid-Energy-Systems/NewareNDA)
-<br>Email: danielcogswell@ses.ai
+<br>Author: Daniel Cogswell
 
 Python module and command line tool for reading and converting Neware nda and ndax battery cycling files. Auxiliary temperature fields are currently supported in both formats.
+
+This repository is a fork for independent development of the [original NewareNDA project](https://github.com/Solid-Energy-Systems/NewareNDA).
 
 # Installation
 To install the latest version from the PyPi package repository:
@@ -18,7 +19,7 @@ pip install --upgrade NewareNDA
 
 To install the development branch directly from Github:
 ```
-pip install git+https://github.com/jerry328-sudo/NewareNDA.git@master
+pip install git+https://github.com/d-cogswell/NewareNDA.git@development
 ```
 
 To install from source, clone this repository and run:

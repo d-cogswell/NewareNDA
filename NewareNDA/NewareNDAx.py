@@ -157,6 +157,8 @@ def _data_interpolation(df):
     # Group by step and run 'inside' interpolation on Time
     df['Time'] = df.groupby('Step')['Time'].transform(
         lambda x: pd.Series.interpolate(x, limit_area='inside'))
+    df['Timestamp'] = df.groupby('Step')['Timestamp'].transform(
+        lambda x: pd.Series.interpolate(x, limit_area='inside'))
 
     # Perform extrapolation to generate the remaining missing Time
     nan_mask2 = df['Time'].notnull()
@@ -165,10 +167,9 @@ def _data_interpolation(df):
     df['Time'] = df['Time'].where(nan_mask2, time)
 
     # Fill in missing Timestamps
-    time_inc = df['Time'].diff().groupby(nan_mask.shift().cumsum()).cumsum()
-    timestamp = df['Timestamp'].ffill() + \
-        pd.to_timedelta(time_inc.fillna(0), unit='s')
-    df['Timestamp'] = df['Timestamp'].where(nan_mask, timestamp)
+    time_inc = df['Timestamp'].diff().ffill().groupby(nan_mask2.cumsum()).cumsum()
+    timestamp = df['Timestamp'].ffill() + time_inc.shift()
+    df['Timestamp'] = df['Timestamp'].where(nan_mask2, timestamp)
 
     # Integrate to get capacity and fill missing values
     capacity = df['Time'].diff()*abs(df['Current(mA)'])/3600
@@ -499,6 +500,67 @@ def _read_ndc_14_filetype_18(mm):
         'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
         'Timestamp', 'Step', 'Index']).astype({'Time': 'float'})
     df['Step'] = _count_changes(df['Step'])
+
+    # Convert timestamp to local timezone
+    tz = datetime.now().astimezone().tzinfo
+    df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
+
+    return df
+
+
+def _read_ndc_17_filetype_1(mm):
+    return _read_ndc_14_filetype_1(mm)
+
+
+def _read_ndc_17_filetype_7(mm):
+    mm_size = mm.size()
+    record_len = 4096
+    header = 4096
+
+    # Read data records
+    rec = []
+    mm.seek(header)
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<ii16sb8si63s', bytes[132:-64]):
+            [Cycle, Step, Status, Step_Index] = [i[0], i[1], i[3], i[5]]
+            if Step_Index != 0:
+                rec.append([Cycle+1, Step, Step_Index, state_dict[Status]])
+
+    # Create DataFrame
+    df = pd.DataFrame(rec, columns=['Cycle', 'Step', 'Step_Index', 'Status'])
+    df['Step'] = _count_changes(df['Step'])
+    return df
+
+
+def _read_ndc_17_filetype_18(mm):
+    mm_size = mm.size()
+    record_len = 4096
+    header = 4096
+
+    # Read data records
+    rec = []
+    mm.seek(header)
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<isffff12siiih53s', bytes[232:-64]):
+            Time = i[0]
+            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
+            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
+            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
+            Msec = i[10]
+            if Index != 0:
+                rec.append([Time/1000,
+                            Charge_Capacity*1000, Discharge_Capacity*1000,
+                            Charge_Energy*1000, Discharge_Energy*1000,
+                            datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
+
+    # Create DataFrame
+    df = pd.DataFrame(rec, columns=[
+        'Time',
+        'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
+        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
+        'Timestamp', 'Step', 'Index'])
 
     # Convert timestamp to local timezone
     tz = datetime.now().astimezone().tzinfo
