@@ -1,10 +1,10 @@
-# 数据字段名称
+# Data field names
 rec_columns = [
     'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
     'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
     'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp']
 
-# 定义字段精度
+# Define field precision
 dtype_dict = {
     'Index': 'uint32',
     'Cycle': 'uint16',
@@ -25,29 +25,29 @@ aux_dtype_dict = {
     't': 'float32'
 }
 
-# 将状态整数映射到字符串的字典
+# Dictionary mapping state integers to strings
 state_dict = {
-    1: 'CC_Chg',        # 恒流充电：以固定电流将电池从低SOC快速充电
-    2: 'CC_DChg',       # 恒流放电：容量测试、倍率性能测试的基础放电方式
-    3: 'CV_Chg',        # 恒压充电：电压维持在上限，电流随极化衰减，确保不因过压造成析锂
-    4: 'Rest',          # 静置/开路休息：渐近热-电化学平衡，用于测量OCV或消除极化
-    5: 'Cycle',         # 循环：将一组步骤按设定循环N次，统计容量衰减、库伦效率等
-    7: 'CCCV_Chg',      # 恒流-恒压充电：业界标准CC→CV两段式充电曲线
-    8: 'CP_DChg',       # 恒功率放电：用固定功率加载，评估能量型电池在功率型工况下的热-电耦合行为
-    9: 'CP_Chg',        # 恒功率充电：以固定功率快速补能，多用于大功率EV验证
-    10: 'CR_DChg',      # 恒电阻放电：通过固定负载电阻考察电池在电压衰减中的电流-功率变化
-    13: 'Pause',        # 暂停：手动/脚本临停，不计入容量；便于换线或更改步序
-    16: 'Pulse',        # 脉冲：典型如HPPC测试，数秒放电/回充脉冲+休息，提取Rs、τ等参数
-    17: 'SIM',          # 工况仿真：导入行车或负载波形文件，按时间序列重现真实功率曲线
-    19: 'CV_DChg',      # 恒压放电：给电芯恒压"拉流"直至到达截止电流，多见于材料研究或BMS失效保护场景
-    20: 'CCCV_DChg',    # 恒流-恒压放电：先定I拉到下限电压，再恒压拉小电流，模拟功率器件"掉电保持"过程
-    21: 'Control',      # 控制/条件跳转：根据IF/DO条件改变流程（如电压阈值、时间、温度）
-    22: 'OCV',          # 开路电压采样：长静置后测Voc，在SoC建模与老化诊断中必不可少
-    26: 'CPCV_DChg',    # 恒功率-恒压放电：先等功率输出，电压触阈后转CV，避免过放又保持功率稳定
-    27: 'CPCV_Chg'      # 恒功率-恒压充电：当功率阶段结束后用CV收尾，既能高效快充又降低末段热应力
+    1: 'CC_Chg',        # Constant current charging: fast charging the battery from low SOC with a fixed current
+    2: 'CC_DChg',       # Constant current discharging: basic discharging method for capacity testing and rate performance testing
+    3: 'CV_Chg',        # Constant voltage charging: voltage maintained at the upper limit, current decays with polarization to ensure no lithium precipitation due to overvoltage
+    4: 'Rest',          # Resting/open circuit rest: asymptotic thermal-electrochemical equilibrium, used to measure OCV or eliminate polarization
+    5: 'Cycle',         # Cycle: repeats a set of steps N times as set, statistics capacity decay, Coulomb efficiency, etc.
+    7: 'CCCV_Chg',      # Constant current-constant voltage charging: industry standard CC→CV two-stage charging curve
+    8: 'CP_DChg',       # Constant power discharging: loading with fixed power to evaluate the thermal-electrical coupling behavior of energy-type batteries under power-type conditions
+    9: 'CP_Chg',        # Constant power charging: fast energy replenishment with fixed power, mostly used for high-power EV verification
+    10: 'CR_DChg',      # Constant resistance discharging: examines current-power changes in voltage decay through a fixed load resistance
+    13: 'Pause',        # Pause: manual/script temporary stop, not counted in capacity; convenient for changing lines or changing step sequences
+    16: 'Pulse',        # Pulse: typical such as HPPC test, seconds of discharge/recharge pulse + rest, extract parameters such as Rs, τ
+    17: 'SIM',          # Condition simulation: import driving or load waveform files, reproduce the real power curve in time series
+    19: 'CV_DChg',      # Constant voltage discharging: constant voltage "pulling current" to the cell until reaching the cut-off current, mostly seen in material research or BMS failure protection scenarios
+    20: 'CCCV_DChg',    # Constant current-constant voltage discharging: first set I to pull to the lower limit voltage, then constant voltage to pull small current, simulating the "power-down hold" process of power devices
+    21: 'Control',      # Control/conditional jump: change the process according to IF/DO conditions (such as voltage threshold, time, temperature)
+    22: 'OCV',          # Open circuit voltage sampling: measure Voc after long rest, essential in SoC modeling and aging diagnosis
+    26: 'CPCV_DChg',    # Constant power-constant voltage discharging: first equal power output, turn to CV after voltage touches threshold, avoid over-discharge and maintain power stability
+    27: 'CPCV_Chg'      # Constant power-constant voltage charging: use CV to finish after the power stage, which can efficiently fast charge and reduce thermal stress in the final stage
 }
 
-# 根据仪器量程设置定义字段缩放
+# Define field scaling based on instrument range settings
 multiplier_dict = {
     -100000000: 10,
     -200000: 1e-2,
