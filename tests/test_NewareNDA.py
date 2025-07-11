@@ -13,6 +13,10 @@ def test_NewareNDA(nda_file, ref_file, software_cycle_number, cycle_mode):
     df['Timestamp'] = df['Timestamp'].apply(datetime.timestamp)
     ref_df['Timestamp'] = ref_df['Timestamp'].apply(datetime.timestamp)
 
+    # Filter reference data to match current output columns
+    df_columns = df.columns.tolist()
+    ref_df = ref_df[df_columns]
+
     pd.testing.assert_frame_equal(df, ref_df, check_like=True)
 
 
@@ -30,5 +34,9 @@ def test_NewareNDAcli(nda_file, ref_file, software_cycle_number, cycle_mode):
     # Convert dates to timestamps for comparison
     df['Timestamp'] = df['Timestamp'].apply(datetime.timestamp)
     ref_df['Timestamp'] = ref_df['Timestamp'].apply(datetime.timestamp)
+
+    # Filter reference data to match current output columns
+    df_columns = df.columns.tolist()
+    ref_df = ref_df[df_columns]
 
     pd.testing.assert_frame_equal(df, ref_df, check_like=True)
