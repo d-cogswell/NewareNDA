@@ -264,6 +264,7 @@ def _bytes_to_list(bytes):
         Index,
         Cycle + 1,
         Step,
+        Step_Index,
         state_dict[Status],
         Time/1000,
         Voltage/10000,
@@ -290,6 +291,7 @@ def _bytes_to_list_BTS9(bytes):
     list = [
         Index,
         0,
+        Step_Index,
         Step_Index,
         state_dict[Status],
         Time/1e6,
@@ -321,6 +323,7 @@ def _bytes_to_list_BTS91(bytes):
     list = [
         Index,
         0,
+        Step_Index,
         Step_Index,
         state_dict[Status],
         Time + 1e-9*Time_ns,
