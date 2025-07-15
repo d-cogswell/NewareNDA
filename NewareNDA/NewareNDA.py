@@ -261,7 +261,7 @@ def _bytes_to_list(bytes):
     except KeyError:
         multiplier = float('nan')
         if Current != 0:
-            raise KeyError(f"Missing range multiplier {Range}. Using BTSDA, get the current at index {Index} and divide by {Current}.")
+            raise KeyError(f"Missing range multiplier {Range}. Using BTSDA, get the current at index {Index} in units of mA, and divide by {Current}.")
         pass
 
     # Create a dictionary for the record
