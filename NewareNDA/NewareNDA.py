@@ -280,7 +280,7 @@ def _bytes_to_list(bytes):
 
 def _bytes_to_list_BTS9(bytes):
     """Helper function to interpret byte strings from BTS9"""
-    [Step_Index, Status] = struct.unpack('<HB', bytes[4:7])
+    [Step_Index, Status] = struct.unpack('<BB', bytes[5:7])
     [Index] = struct.unpack('<I', bytes[12:16])
     [Time, Voltage, Current] = struct.unpack('<Qff', bytes[24:40])
     [Charge_Capacity, Charge_Energy,
@@ -308,7 +308,7 @@ def _bytes_to_list_BTS9(bytes):
 
 def _bytes_to_list_BTS91(bytes):
     """Helper function to interpret byte strings from BTS9.1"""
-    [Step_Index, Status] = struct.unpack('<HB', bytes[1:4])
+    [Step_Index, Status] = struct.unpack('<BB', bytes[2:4])
     [Index, Time, Time_ns] = struct.unpack('<III', bytes[8:20])
     [Current, Voltage, Capacity, Energy] = struct.unpack('<ffff', bytes[20:36])
     [Date, Date_ns] = struct.unpack('<II', bytes[44:52])
