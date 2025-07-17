@@ -15,7 +15,7 @@ import pandas as pd
 
 from .utils import _generate_cycle_number, _count_changes
 from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
-    multiplier_dict
+    multiplier_dict, aux_chl_type_columns
 
 logger = logging.getLogger('newarenda')
 
@@ -59,18 +59,44 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         except Exception:
             pass
 
-        # Read aux channel mapping from TestInfo.xml
-        aux_ch_dict = {}
-        try:
-            step = zf.extract('TestInfo.xml', path=tmpdir)
-            with open(step, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config')
+        # Find all auxiliary channel files
+        # Auxiliary files files need to be matched to entries in TestInfo.xml
+        # Sort by the numbers in the filename, assume same order in TestInfo.xml
+        aux_data = []
+        for f in zf.namelist():
+            m = re.search(r"data_AUX_(\d+)_(\d+)_(\d+)\.ndc", f)
+            if m:
+                aux_data.append((f, list(map(int, m.groups()))))
+            else:
+                m = re.search(r".*_(\d+)\.ndc", f)
+                if m:
+                    aux_data.append((f, [int(m.group(1)), 0, 0]))
 
-            for child in config.find("TestInfo"):
-                aux_ch_dict.update({int(child.attrib['RealChlID']): int(child.attrib['AuxID'])})
+        # Sort by the three integers
+        aux_data.sort(key=lambda x: x[1])
+        aux_filenames = [f for f, _ in aux_data]
 
-        except Exception:
-            pass
+        # Find all auxiliary channel dicts in TestInfo.xml
+        aux_ch_dict = {f: {} for f in aux_filenames}
+        if aux_filenames:
+            try:
+                step = zf.extract('TestInfo.xml', path=tmpdir)
+                with open(step, 'r', encoding='gb2312') as f:
+                    config = ET.fromstring(f.read()).find('config')
+
+                aux_dicts = [
+                    {k: int(v) if v.isdigit() else v for k, v in child.attrib.items()}
+                    for child in config.find("TestInfo")
+                    if "aux" in child.tag.lower()
+                ]
+
+                # Map filenames to dicts, assume files are in same order as TestInfo.xml
+                if len(aux_dicts) == len(aux_filenames):
+                    aux_ch_dict = dict(zip(aux_filenames, aux_dicts))
+                else:
+                    logger.warning("Different number of aux channels in files and TestInfo.xml")
+            except Exception:
+                logger.exception("Found aux files, but could not read TestInfo.xml")
 
         # Try to read data.ndc
         if 'data.ndc' in zf.namelist():
@@ -101,30 +127,41 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
                 _data_interpolation(data_df)
 
         # Read and merge Aux data from ndc files
-        aux_df = pd.DataFrame([])
-        for f in zf.namelist():
+        for i, (f, aux_dict) in enumerate(aux_ch_dict.items()):
+            aux_file = zf.extract(f, path=tmpdir)
+            aux_df = read_ndc(aux_file)
 
-            # If the filename contains a channel number, convert to aux_id
-            m = re.search("data_AUX_([0-9]+)_[0-9]+_[0-9]+[.]ndc", f)
-            if m:
-                ch = int(m[1])
-                aux_id = aux_ch_dict[ch]
-            else:
-                m = re.search(".*_([0-9]+)[.]ndc", f)
-                if m:
-                    aux_id = int(m[1])
+            # Get aux ID from runInfo, if not Aux column, if not -1, -2 etc.
+            aux_id = aux_dict.get("AuxID", None)
+            if aux_id is None:
+                aux_id = (
+                    aux_df["Aux"].iloc[0]
+                    if "Aux" in aux_df.columns and len(aux_df["Aux"]) > 0
+                    else -i-1
+                )
 
-            if m:
-                aux_file = zf.extract(f, path=tmpdir)
-                aux = read_ndc(aux_file)
-                aux['Aux'] = aux_id
-                aux_df = pd.concat([aux_df, aux], ignore_index=True)
-        if not aux_df.empty:
+            # If ? column exists, first rename name by ChlType (T, t, H)
+            if "?" in aux_df.columns and aux_dict.get("ChlType") in aux_chl_type_columns:
+                aux_df = aux_df.rename(
+                    columns = {"?": aux_chl_type_columns[aux_dict["ChlType"]]},
+                )
+
+            # Cast columns to types defined in aux_dtype_dict
             aux_df = aux_df.astype(
-                {k: aux_dtype_dict[k] for k in aux_dtype_dict.keys() & aux_df.columns})
-            pvt_df = aux_df.pivot(index='Index', columns='Aux')
-            pvt_df.columns = pvt_df.columns.map(lambda x: ''.join(map(str, x)))
-            data_df = data_df.join(pvt_df, on='Index')
+                {k: aux_dtype_dict[k] for k in aux_dtype_dict.keys() & aux_df.columns},
+            )
+
+            # Drop the Aux column if it exists
+            if "Aux" in aux_df.columns:
+                aux_df = aux_df.drop(columns=["Aux"])
+
+            # Append the aux ID to all columns except Index
+            aux_df = aux_df.rename(
+                columns = {col: f"{col}{aux_id}" for col in aux_df.columns if col not in ["Index"]},
+            )
+
+            # Merge into data_df on Index
+            data_df = data_df.merge(aux_df, how="left", on="Index")
 
     if software_cycle_number:
         data_df['Cycle'] = _generate_cycle_number(data_df, cycle_mode)
@@ -450,7 +487,7 @@ def _read_ndc_14_filetype_5(mm):
             aux.append(i[0])
 
     # Create DataFrame
-    aux_df = pd.DataFrame(aux, columns=['T'])
+    aux_df = pd.DataFrame(aux, columns=['?'])  # Placeholder - data type found later from TestInfo.xml
     aux_df['Index'] = aux_df.index + 1
 
     return aux_df
