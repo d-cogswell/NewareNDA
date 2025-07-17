@@ -97,3 +97,10 @@ multiplier_dict = {
     100000: 1e-1,
     200000: 1e-1,
 }
+
+# Renaming aux columns by ChlType
+aux_chl_type_columns = {
+    103: "T",
+    335: "t",
+    345: "H",
+}
