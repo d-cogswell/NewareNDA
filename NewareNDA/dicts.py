@@ -22,7 +22,8 @@ dtype_dict = {
 aux_dtype_dict = {
     'V': 'float32',
     'T': 'float32',
-    't': 'float32'
+    't': 'float32',
+    'H': 'float32',
 }
 
 # Dictionary mapping Status integer to string
