@@ -9,6 +9,7 @@ dtype_dict = {
     'Index': 'uint32',
     'Cycle': 'uint32',
     'Step': 'uint32',
+    'Step_Index': 'uint32',
     'Status': 'category',
     'Time': 'float32',
     'Voltage': 'float32',
