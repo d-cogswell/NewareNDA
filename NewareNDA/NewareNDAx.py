@@ -11,6 +11,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from io import BytesIO
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -28,7 +29,11 @@ from .utils import _count_changes, _generate_cycle_number
 logger = logging.getLogger('newarenda')
 
 
-def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
+def read_ndax(
+        file: str,
+        software_cycle_number: bool=False,
+        cycle_mode: Literal["auto","chg","dchg"]="chg",
+    ) -> pd.DataFrame:
     """
     Function to read electrochemical data from a Neware ndax binary file.
 
@@ -127,16 +132,17 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
     if df["Time"].is_null().any():
         df = _data_interpolation(df)
 
-    # Column calculations in parallel:
-    # round time to ms, Status -> categories, uts -> Timestamp, software cycle number
+    # Generate cycle number if requested
+    if software_cycle_number:
+        df = _generate_cycle_number(df, cycle_mode)
+
+    # round time to ms, Status -> categories, uts -> Timestamp
     cols = [
         pl.col("Time").round(3),
         pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
     ]
     if "uts" in df.columns:
         cols += [pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp")]
-    if software_cycle_number:
-        cols += [pl.Series(name="Cycle", values=_generate_cycle_number(df, cycle_mode))]
 
     df = df.with_columns(cols)
 

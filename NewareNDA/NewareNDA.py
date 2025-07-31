@@ -7,6 +7,7 @@ import mmap
 import os
 import struct
 from datetime import datetime
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ from .utils import _count_changes, _generate_cycle_number
 logger = logging.getLogger('newarenda')
 
 
-def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
+def read(file, software_cycle_number=True, cycle_mode: Literal["chg", "dchg", "auto"] = "chg", log_level='INFO'):
     """
     Read electrochemical data from an Neware nda or ndax binary file.
 
@@ -56,7 +57,7 @@ def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
         raise TypeError("File type not supported!")
 
 
-def read_nda(file, software_cycle_number, cycle_mode='chg'):
+def read_nda(file: str, software_cycle_number: bool, cycle_mode: Literal["chg", "dchg", "auto"] = "chg"):
     """
     Function read electrochemical data from a Neware nda binary file.
 
@@ -105,6 +106,9 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
             logger.error(f"nda version {nda_version} is not yet supported!")
             raise NotImplementedError(f"nda version {nda_version} is not yet supported!")
 
+    if software_cycle_number:
+        data_df = _generate_cycle_number(data_df, cycle_mode)
+
     # Convert uts_s to Timestamp and replace Status ints with strings
     # Leave timezone localization to the end! Doing in polars then casting to pandas can cause kernel crashes
     data_df = data_df.with_columns([
@@ -112,7 +116,6 @@ def read_nda(file, software_cycle_number, cycle_mode='chg'):
         pl.col("Time").round(3),  # Round to nearest ms
         pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp") if "uts" in data_df.columns else pl.lit(None),
         pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
-        pl.Series(name="Cycle", values=_generate_cycle_number(data_df, cycle_mode)) if software_cycle_number else pl.lit(None),
     ])
 
     # Keep only record columns
