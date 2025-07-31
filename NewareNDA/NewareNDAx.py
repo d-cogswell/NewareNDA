@@ -3,15 +3,14 @@
 # Email: danielcogswell@ses.ai
 
 import logging
-import mmap
 import re
 import struct
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from io import BytesIO
 
 import numpy as np
 import pandas as pd
@@ -43,128 +42,125 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
     Returns:
         df (pd.DataFrame): DataFrame containing all records in the file
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zf = zipfile.PyZipFile(file)
 
-        # Read version information
-        try:
-            version_info = zf.extract('VersionInfo.xml', path=tmpdir)
-            with open(version_info, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config/ZwjVersion')
-            logger.info(f"Server version: {config.attrib['SvrVer']}")
-            logger.info(f"Client version: {config.attrib['CurrClientVer']}")
-            logger.info(f"Control unit version: {config.attrib['ZwjVersion']}")
-            logger.info(f"Tester version: {config.attrib['MainXwjVer']}")
-        except Exception:
-            pass
+    zf = zipfile.PyZipFile(file)
 
-        # Read active mass
-        try:
-            step = zf.extract('Step.xml', path=tmpdir)
-            with open(step, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config')
-            active_mass = float(config.find('Head_Info/SCQ').attrib['Value'])
-            logger.info(f"Active mass: {active_mass/1000} mg")
-        except Exception:
-            pass
+    # Read version information
+    try:
+        version_info = zf.read('VersionInfo.xml').decode("gb2312")
+        config = ET.fromstring(version_info).find('config/ZwjVersion')
+        logger.info(f"Server version: {config.attrib['SvrVer']}")
+        logger.info(f"Client version: {config.attrib['CurrClientVer']}")
+        logger.info(f"Control unit version: {config.attrib['ZwjVersion']}")
+        logger.info(f"Tester version: {config.attrib['MainXwjVer']}")
+    except Exception:
+        pass
 
-        # Find all auxiliary channel files
-        # Auxiliary files files need to be matched to entries in TestInfo.xml
-        # Sort by the numbers in the filename, assume same order in TestInfo.xml
-        aux_data = []
-        for f in zf.namelist():
-            m = re.search(r"data_AUX_(\d+)_(\d+)_(\d+)\.ndc", f)
-            if m:
-                aux_data.append((f, list(map(int, m.groups()))))
-            else:
-                m = re.search(r".*_(\d+)\.ndc", f)
-                if m:
-                    aux_data.append((f, [int(m.group(1)), 0, 0]))
+    # Read active mass
+    try:
+        step = zf.read('Step.xml').decode("gb2312")
+        config = ET.fromstring(step).find('config')
+        active_mass = float(config.find('Head_Info/SCQ').attrib['Value'])
+        logger.info(f"Active mass: {active_mass/1000} mg")
+    except Exception:
+        pass
 
-        # Sort by the three integers
-        aux_data.sort(key=lambda x: x[1])
-        aux_filenames = [f for f, _ in aux_data]
-
-        # Find all auxiliary channel dicts in TestInfo.xml
-        aux_dicts = []
-        if aux_filenames:
-            step = zf.extract('TestInfo.xml', path=tmpdir)
-            with open(step, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config')
-            for child in config.find("TestInfo"):
-                if "aux" in child.tag.lower():
-                    aux_dicts.append({k: int(v) if v.isdigit() else v for k, v in child.attrib.items()})
-
-        # ASSUME channel files are in the same order as TestInfo.xml, map filenames to dicts
-        if len(aux_dicts) == len(aux_filenames):
-            aux_ch_dict = {f: d for f, d in zip(aux_filenames, aux_dicts)}
+    # Find all auxiliary channel files
+    # Auxiliary files files need to be matched to entries in TestInfo.xml
+    # Sort by the numbers in the filename, assume same order in TestInfo.xml
+    aux_data = []
+    for f in zf.namelist():
+        m = re.search(r"data_AUX_(\d+)_(\d+)_(\d+)\.ndc", f)
+        if m:
+            aux_data.append((f, list(map(int, m.groups()))))
         else:
-            aux_ch_dict = {}
-            logger.critical("Found a different number of aux channels in files and TestInfo.xml!")
+            m = re.search(r".*_(\d+)\.ndc", f)
+            if m:
+                aux_data.append((f, [int(m.group(1)), 0, 0]))
 
-        # Extract and parse all of the .ndc files into dataframes in parallel
-        files_to_read = ["data.ndc", "data_runInfo.ndc", "data_step.ndc", *aux_filenames]
-        dfs = {}
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(extract_and_read_ndc, zf, fname, tmpdir): fname
-                for fname in files_to_read
-            }
-            for future in as_completed(futures):
-                fname, df = future.result()
-                if df is not None:
-                    dfs[fname] = df
+    # Sort by the three integers
+    aux_data.sort(key=lambda x: x[1])
+    aux_filenames = [f for f, _ in aux_data]
 
-        if "data.ndc" not in dfs:
-            msg = "File type not yet supported!"
-            raise NotImplementedError(msg)
+    # Find all auxiliary channel dicts in TestInfo.xml
+    aux_dicts = []
+    if aux_filenames:
+        step = zf.read('TestInfo.xml').decode("gb2312")
+        config = ET.fromstring(step).find('config')
+        for child in config.find("TestInfo"):
+            if "aux" in child.tag.lower():
+                aux_dicts.append({k: int(v) if v.isdigit() else v for k, v in child.attrib.items()})
 
-        df = dfs["data.ndc"]
+    # ASSUME channel files are in the same order as TestInfo.xml, map filenames to dicts
+    if len(aux_dicts) == len(aux_filenames):
+        aux_ch_dict = {f: d for f, d in zip(aux_filenames, aux_dicts)}
+    else:
+        aux_ch_dict = {}
+        logger.critical("Found a different number of aux channels in files and TestInfo.xml!")
 
-        if "data_runInfo.ndc" in dfs:
-            df = df.join(dfs["data_runInfo.ndc"], how="left", on="Index")
-        if "data_step.ndc" in dfs:
-            df = df.with_columns([pl.col("Step").forward_fill()])
-            df = df.join(dfs["data_step.ndc"], how="left", on="Step")
+    # Extract and parse all of the .ndc files into dataframes in parallel
+    files_to_read = ["data.ndc", "data_runInfo.ndc", "data_step.ndc", *aux_filenames]
+    dfs = {}
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(extract_and_read_ndc, zf, fname): fname
+            for fname in files_to_read
+        }
+        for future in as_completed(futures):
+            fname, df = future.result()
+            if df is not None:
+                dfs[fname] = df
 
-        # Interpolate missing data if necessary
-        if df["Time"].is_null().any():
-            df = _data_interpolation(df)
+    if "data.ndc" not in dfs:
+        msg = "File type not yet supported!"
+        raise NotImplementedError(msg)
 
-        # Column calculations in parallel:
-        # round time to ms, Status -> categories, uts -> Timestamp, software cycle number
-        cols = [
-            pl.col("Time").round(3),
-            pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
-        ]
-        if "uts" in df.columns:
-            cols += [pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp")]
-        if software_cycle_number:
-            cols += [pl.Series(name="Cycle", values=_generate_cycle_number(df, cycle_mode))]
+    df = dfs["data.ndc"]
 
-        df = df.with_columns(cols)
+    if "data_runInfo.ndc" in dfs:
+        df = df.join(dfs["data_runInfo.ndc"], how="left", on="Index")
+    if "data_step.ndc" in dfs:
+        df = df.with_columns([pl.col("Step").forward_fill()])
+        df = df.join(dfs["data_step.ndc"], how="left", on="Step")
 
-        # Keep only record columns
-        df = df.select(rec_columns)
-        df = df.cast(dtype_dict)
+    # Interpolate missing data if necessary
+    if df["Time"].is_null().any():
+        df = _data_interpolation(df)
 
-        # Merge the aux data if it exists
-        for i, (f, aux_dict) in enumerate(aux_ch_dict.items()):
-            if f not in dfs:
-                continue
-            else:
-                aux_df = dfs[f]
+    # Column calculations in parallel:
+    # round time to ms, Status -> categories, uts -> Timestamp, software cycle number
+    cols = [
+        pl.col("Time").round(3),
+        pl.col("Status").replace_strict(state_dict, default=None).alias("Status"),
+    ]
+    if "uts" in df.columns:
+        cols += [pl.from_epoch(pl.col("uts"), time_unit="s").alias("Timestamp")]
+    if software_cycle_number:
+        cols += [pl.Series(name="Cycle", values=_generate_cycle_number(df, cycle_mode))]
 
-            # Get aux ID, use -i if not present to avoid conflicts
-            aux_id = aux_dict.get("AuxID", -i)
+    df = df.with_columns(cols)
 
-            # If ? column exists, rename name by ChlType (T, t, H)
-            if "?" in aux_df.columns and aux_dict.get("ChlType") in aux_chl_type_columns:
-                col = aux_chl_type_columns[aux_dict["ChlType"]]
-                aux_df = aux_df.rename({"?": f"{col}{aux_id}"})
-            else:  # Otherwise just append aux ID to column names
-                aux_df = aux_df.rename({col: f"{col}{aux_id}" for col in aux_df.columns if col not in ["Index"]})
-            df = df.join(aux_df, how="left", on="Index")
+    # Keep only record columns
+    df = df.select(rec_columns)
+    df = df.cast(dtype_dict)
+
+    # Merge the aux data if it exists
+    for i, (f, aux_dict) in enumerate(aux_ch_dict.items()):
+        if f not in dfs:
+            continue
+        else:
+            aux_df = dfs[f]
+
+        # Get aux ID, use -i if not present to avoid conflicts
+        aux_id = aux_dict.get("AuxID", -i)
+
+        # If ? column exists, rename name by ChlType (T, t, H)
+        if "?" in aux_df.columns and aux_dict.get("ChlType") in aux_chl_type_columns:
+            col = aux_chl_type_columns[aux_dict["ChlType"]]
+            aux_df = aux_df.rename({"?": f"{col}{aux_id}"})
+        else:  # Otherwise just append aux ID to column names
+            aux_df = aux_df.rename({col: f"{col}{aux_id}" for col in aux_df.columns if col not in ["Index"]})
+        df = df.join(aux_df, how="left", on="Index")
 
     # Convert to pandas, change timestamp to local timezone
     df = df.to_pandas()
@@ -172,11 +168,11 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
     df["Timestamp"] = pd.to_datetime(df["Timestamp"]).dt.tz_localize("UTC").dt.tz_convert(tz)
     return df
 
-def extract_and_read_ndc(zf: zipfile.ZipFile, filename: str, tmpdir: str) -> tuple[str, pd.DataFrame | None]:
+def extract_and_read_ndc(zf: zipfile.ZipFile, filename: str) -> tuple[str, pd.DataFrame | None]:
     """Extract .ndc from a zipfile and reads it into a DataFrame."""
     if filename in zf.namelist():
-        file_path = zf.extract(filename, path=tmpdir)
-        return filename, read_ndc(file_path)
+        file_bytes = zf.read(filename)
+        return filename, read_ndc(BytesIO(file_bytes))
     return filename, None
 
 def _data_interpolation(df):
@@ -232,7 +228,7 @@ def _data_interpolation(df):
     return df
 
 
-def read_ndc(file):
+def read_ndc(f: BytesIO):
     """
     Function to read electrochemical data from a Neware ndc binary file.
 
@@ -242,19 +238,20 @@ def read_ndc(file):
         df (pd.DataFrame): DataFrame containing all records in the file
         aux_df (pd.DataFrame): DataFrame containing any temperature data
     """
-    with open(file, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-        # Get ndc file version and filetype
-        [ndc_filetype] = struct.unpack("<B", mm[0:1])
-        [ndc_version] = struct.unpack("<B", mm[2:3])
-        logger.debug("NDC version: %d filetype: %d", ndc_version, ndc_filetype)
-        try:
-            func = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
-            return func(mm)
-        except AttributeError:
-            raise NotImplementedError(f"ndc version {ndc_version} filetype {ndc_filetype} is not yet supported!")
+    buf = f.read()
+
+    # Get ndc file version and filetype
+    [ndc_filetype] = struct.unpack("<B", buf[0:1])
+    [ndc_version] = struct.unpack("<B", buf[2:3])
+    logger.debug("NDC version: %d filetype: %d", ndc_version, ndc_filetype)
+    try:
+        func = getattr(sys.modules[__name__], f"_read_ndc_{ndc_version}_filetype_{ndc_filetype}")
+        return func(buf)
+    except AttributeError:
+        raise NotImplementedError(f"ndc version {ndc_version} filetype {ndc_filetype} is not yet supported!")
 
 
-def _read_ndc_2_filetype_1(mm):
+def _read_ndc_2_filetype_1(buf: bytes):
     dtype = np.dtype([  # 0
         ("_pad1",  "V8"),  # 0-7
         ("Index",  np.uint32),  # 8-11
@@ -279,7 +276,7 @@ def _read_ndc_2_filetype_1(mm):
         ("Range", np.int32), # 82-85
         ("_pad4", "V8"), # 86-93
     ])
-    df = _read_ndc(mm, dtype, 5, 37, record_size = 512, file_header_size = 512).with_columns([
+    df = _read_ndc(buf, dtype, 5, 37, record_size = 512, file_header_size = 512).with_columns([
         pl.col("Cycle") + 1,
         pl.col("Time").cast(pl.Float32) * 1e-3,
         pl.col("Voltage").cast(pl.Float32) * 1e-4,
@@ -295,7 +292,7 @@ def _read_ndc_2_filetype_1(mm):
     return df.drop(["Y", "M", "D", "h", "m", "s"])
 
 
-def _read_ndc_2_filetype_5(mm):
+def _read_ndc_2_filetype_5(buf):
     # This dtype is missing humudity % column - does not exist in current test data
     dtype = np.dtype([
         ("_pad2",  "V8"),  # 4-7
@@ -307,14 +304,14 @@ def _read_ndc_2_filetype_5(mm):
         ("t", np.int16),  # 43-44
         ("_pad5", "V49"),  # 45-93
     ])
-    return _read_ndc(mm, dtype, 5, 37, record_size = 512, file_header_size = 512).with_columns(
+    return _read_ndc(buf, dtype, 5, 37, record_size = 512, file_header_size = 512).with_columns(
         pl.col("V").cast(pl.Float32) / 10000,
         pl.col("T").cast(pl.Float32) * 0.1,
         pl.col("t").cast(pl.Float32) * 0.1,
     )
 
 
-def _read_ndc_5_filetype_1(mm):
+def _read_ndc_5_filetype_1(buf):
     dtype = np.dtype([  # 0
         ("_pad1",  "V8"),  # 0-7
         ("Index",  np.uint32),  # 8-11
@@ -339,7 +336,7 @@ def _read_ndc_5_filetype_1(mm):
         ("Range", np.int32), # 82-85
         ("_pad4", "V1"), # 86
     ])
-    df = _read_ndc(mm, dtype, 125, 56).with_columns([
+    df = _read_ndc(buf, dtype, 125, 56).with_columns([
         pl.col("Cycle") + 1,
         pl.col("Time").cast(pl.Float32) * 1e-3,
         pl.col("Voltage").cast(pl.Float32) * 1e-4,
@@ -355,7 +352,7 @@ def _read_ndc_5_filetype_1(mm):
     return df.drop(["Y", "M", "D", "h", "m", "s"])
 
 
-def _read_ndc_5_filetype_5(mm):
+def _read_ndc_5_filetype_5(buf):
     dtype = np.dtype([
         ("_pad2",  "V8"),  # 4-7
         ("Index",  np.uint32), # 8-11
@@ -366,39 +363,39 @@ def _read_ndc_5_filetype_5(mm):
         ("t", np.int16),  # 43-44
         ("_pad5", "V42"),  # 45-86
     ])
-    return _read_ndc(mm, dtype, 125, 56).with_columns(
+    return _read_ndc(buf, dtype, 125, 56).with_columns(
         pl.col("V").cast(pl.Float32) * 1e-4,
         pl.col("T").cast(pl.Float32) * 0.1,
         pl.col("t").cast(pl.Float32) * 0.1,
     )
 
 
-def _read_ndc_11_filetype_1(mm):
+def _read_ndc_11_filetype_1(buf):
     dtype = np.dtype([
         ("Voltage", "<f4"),
         ("Current(mA)", "<f4"),
     ])
-    return _read_ndc(mm, dtype, 132, 4).with_columns([
+    return _read_ndc(buf, dtype, 132, 4).with_columns([
         pl.col("Voltage") * 1e-4,  # 0.1mV -> V
     ])
 
 
-def _read_ndc_11_filetype_5(mm):
+def _read_ndc_11_filetype_5(buf):
     header = 4096
 
-    if mm[header+132:header+133] == b"\x65":
+    if buf[header+132:header+133] == b"\x65":
         dtype = np.dtype([
             ("mask", "<i1"),
             ("V", "<f4"),
             ("T", "<i2"),
         ])
-        return _read_ndc(mm, dtype, 132, 2, mask=101).with_columns([
+        return _read_ndc(buf, dtype, 132, 2, mask=101).with_columns([
             pl.col("V") * 1e-4,  # 0.1 mV -> V
             pl.col("T").cast(pl.Float32) * 0.1,  # 0.1'C -> 'C
             pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
         ])
 
-    if mm[header+132:header+133] == b"\x74":
+    if buf[header+132:header+133] == b"\x74":
         dtype = np.dtype([
             ("_pad1", "V1"),
             ("Index", "<i4"),
@@ -407,7 +404,7 @@ def _read_ndc_11_filetype_5(mm):
             ("T", "<i2"),
             ("_pad3", "V51"),
         ])
-        return _read_ndc(mm, dtype, 132, 4).with_columns([
+        return _read_ndc(buf, dtype, 132, 4).with_columns([
             pl.col("T").cast(pl.Float32) * 0.1,  # 0.1'C -> 'C
         ]).drop("Aux")  # Aux channel inferred from TestInfo.xml
 
@@ -415,7 +412,7 @@ def _read_ndc_11_filetype_5(mm):
     raise NotImplementedError(msg)
 
 
-def _read_ndc_11_filetype_7(mm):
+def _read_ndc_11_filetype_7(buf):
     dtype = np.dtype([
         ("Cycle", "<i4"),
         ("Step_Index",  "<i4"),
@@ -423,13 +420,13 @@ def _read_ndc_11_filetype_7(mm):
         ("Status", "<i1"),
         ("_pad2", "V12"),
     ])
-    return _read_ndc(mm, dtype, 132, 5).with_columns([
+    return _read_ndc(buf, dtype, 132, 5).with_columns([
         pl.col("Cycle") + 1,
         pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Step"),
     ])
 
 
-def _read_ndc_11_filetype_18(mm):
+def _read_ndc_11_filetype_18(buf):
     dtype = np.dtype([
         ("Time", "<i4"),
         ("_pad1",  "V1"),
@@ -444,7 +441,7 @@ def _read_ndc_11_filetype_18(mm):
         ("Index", "<i4"),
         ("uts_ms", "<i2"),
     ])
-    return _read_ndc(mm, dtype, 132, 16).with_columns([
+    return _read_ndc(buf, dtype, 132, 16).with_columns([
         pl.col("Time", "dt").cast(pl.Float32) / 1000,  # Division in 32-bit
         pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
             "Charge_Energy(mWh)", "Discharge_Energy(mWh)") / 3600, # mAs|mWs -> mAh|mWh
@@ -453,26 +450,26 @@ def _read_ndc_11_filetype_18(mm):
     ])
 
 
-def _read_ndc_14_filetype_1(mm):
+def _read_ndc_14_filetype_1(buf):
     dtype = np.dtype([
         ("Voltage", "<f4"),
         ("Current(mA)", "<f4"),
     ])
-    return _read_ndc(mm, dtype, 132, 4).with_columns([
+    return _read_ndc(buf, dtype, 132, 4).with_columns([
         pl.col("Current(mA)") * 1000,
     ])
 
 
-def _read_ndc_14_filetype_5(mm):
+def _read_ndc_14_filetype_5(buf):
     dtype = np.dtype([
         ("?", "<f4"),  # Column name is assigned later from TestInfo.xml
     ])
-    return _read_ndc(mm, dtype, 132, 4).with_columns([
+    return _read_ndc(buf, dtype, 132, 4).with_columns([
         pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Index"),
     ])
 
 
-def _read_ndc_14_filetype_7(mm):
+def _read_ndc_14_filetype_7(buf):
     dtype = np.dtype([
         ("Cycle", "<i4"),
         ("Step_Index", "<i4"),
@@ -480,13 +477,13 @@ def _read_ndc_14_filetype_7(mm):
         ("Status", "<i1"),
         ("_pad2", "V12"),
     ])
-    return _read_ndc(mm, dtype, 132, 5).with_columns([
+    return _read_ndc(buf, dtype, 132, 5).with_columns([
         pl.col("Cycle") + 1,
         pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Step"),
     ])
 
 
-def _read_ndc_14_filetype_18(mm):
+def _read_ndc_14_filetype_18(buf):
     dtype = np.dtype([
         ("Time", "<i4"),
         ("_pad1",  "V1"),
@@ -502,7 +499,7 @@ def _read_ndc_14_filetype_18(mm):
         ("uts_ms", "<i2"),
         ("_pad3",  "V8"),
     ])
-    return _read_ndc(mm, dtype, 132, 4).with_columns([
+    return _read_ndc(buf, dtype, 132, 4).with_columns([
         pl.col("Time", "dt").cast(pl.Float32) / 1000,  # ms -> s
         pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
             "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000,  # Ah|Wh -> mAh|mWh
@@ -511,11 +508,11 @@ def _read_ndc_14_filetype_18(mm):
     ])
 
 
-def _read_ndc_17_filetype_1(mm):
-    return _read_ndc_14_filetype_1(mm)
+def _read_ndc_17_filetype_1(buf):
+    return _read_ndc_14_filetype_1(buf)
 
 
-def _read_ndc_17_filetype_7(mm):
+def _read_ndc_17_filetype_7(buf):
     dtype = np.dtype([
         ("Cycle", "<i4"),
         ("Step", "<i4"),
@@ -525,13 +522,13 @@ def _read_ndc_17_filetype_7(mm):
         ("Step_Index", "<i4"),
         ("_pad3", "V63"),
     ])
-    return _read_ndc(mm, dtype, 132, 64).with_columns([
+    return _read_ndc(buf, dtype, 132, 64).with_columns([
         pl.int_range(1, pl.len() + 1, dtype=pl.Int32).alias("Cycle"),
         _count_changes(pl.col("Step")).alias("Step"),
     ])
 
 
-def _read_ndc_17_filetype_18(mm):
+def _read_ndc_17_filetype_18(buf):
     dtype = np.dtype([
         ("Time", "<i4"),
         ("_pad1",  "V1"),
@@ -547,7 +544,7 @@ def _read_ndc_17_filetype_18(mm):
         ("uts_ms", "<i2"),
         ("_pad3",  "V53"),
     ])
-    return _read_ndc(mm,dtype, 132, 64).with_columns([
+    return _read_ndc(buf,dtype, 132, 64).with_columns([
         pl.col("Time", "dt").cast(pl.Float32) / 1000,
         (pl.col("Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
             "Charge_Energy(mWh)", "Discharge_Energy(mWh)") * 1000).cast(pl.Float32),  # Ah|Wh -> mAh|mWh
@@ -555,7 +552,7 @@ def _read_ndc_17_filetype_18(mm):
     ])
 
 def _read_ndc(
-    mm: mmap.mmap,
+    buf: bytes,
     dtype: np.dtype,
     record_header_size: int,
     record_footer_size: int,
@@ -566,7 +563,7 @@ def _read_ndc(
     """Read ndc file into a polars DataFrame.
 
     Args:
-        mm (mmap.mmap): Memory-mapped file object.
+        buf (bytes): Bytes object containing the ndc file data.
         dtype (np.dtype): Numpy dtype describing the record structure.
         record_header_size (int): Size of the record header in bytes.
         record_footer_size (int): Size of the record footer in bytes.
@@ -580,8 +577,8 @@ def _read_ndc(
 
     """
     # Read entire file into 1 byte array nrecords x record_size
-    num_records = (len(mm)-file_header_size) // record_size
-    arr = np.frombuffer(mm[file_header_size:], dtype=np.int8).reshape((num_records, record_size))
+    num_records = (len(buf)-file_header_size) // record_size
+    arr = np.frombuffer(buf[file_header_size:], dtype=np.int8).reshape((num_records, record_size))
     # Slice the header and footer
     arr = arr[:, record_header_size:-record_footer_size]
     # Remove padding columns
