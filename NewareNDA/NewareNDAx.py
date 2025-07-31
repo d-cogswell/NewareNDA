@@ -382,7 +382,7 @@ def _read_ndc_11_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<ixffff8xiiiih', bytes[132:-63]):
+        for i in struct.iter_unpack('<ixffff8xiiiih', bytes[132:-16]):
             Time = i[0]
             [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
             [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
@@ -463,7 +463,7 @@ def _read_ndc_14_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<ixffff8xiiiih8s', bytes[132:-59]):
+        for i in struct.iter_unpack('<ixffff8xiiiih8s', bytes[132:-4]):
             Time = i[0]
             [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
             [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
@@ -526,7 +526,7 @@ def _read_ndc_17_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<ixffff8xiiiih53s', bytes[232:-64]):
+        for i in struct.iter_unpack('<ixffff8xiiiih53s', bytes[132:-64]):
             Time = i[0]
             [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
             [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
