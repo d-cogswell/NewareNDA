@@ -191,21 +191,21 @@ def _data_interpolation(df):
     """
     # Get time by forward filling differences
     df = df.with_columns([
-        pl.col("Time").is_not_null().alias("nan_mask"),
+        pl.col("Time").is_null().alias("nan_mask"),
         pl.col("Time").is_not_null().cum_sum().shift(1).fill_null(0).alias("group_idx"),
         pl.col("dt", "Time", "uts", "Charge_Capacity(mAh)", "Discharge_Capacity(mAh)",
            "Charge_Energy(mWh)", "Discharge_Energy(mWh)").fill_null(strategy="forward"),
     ])
 
     df = df.with_columns([
-        (pl.col("dt").cum_sum().over("group_idx") * (~pl.col("nan_mask"))).alias("cdt"),
+        (pl.col("dt").cum_sum().over("group_idx") * (pl.col("nan_mask"))).alias("cdt"),
         (
             (pl.col("dt") * pl.col("Current(mA)") / 3600)
-            .cum_sum().over("group_idx") * ~pl.col("nan_mask")
+            .cum_sum().over("group_idx") * pl.col("nan_mask")
         ).alias("inc_capacity"),
         (
             (pl.col("dt") * pl.col("Voltage") * pl.col("Current(mA)") / 3600)
-            .cum_sum().over("group_idx") * ~pl.col("nan_mask")
+            .cum_sum().over("group_idx") * pl.col("nan_mask")
         ).alias("inc_energy"),
     ])
 
@@ -213,16 +213,16 @@ def _data_interpolation(df):
         (pl.col("Time") + pl.col("cdt")).alias("Time"),
         (pl.col("uts") + pl.col("cdt")).alias("uts"),
         (
-            pl.col("Charge_Capacity(mAh)").abs() + pl.col("inc_capacity").clip(lower_bound=0).abs()
+            pl.col("Charge_Capacity(mAh)").abs() + pl.col("inc_capacity").clip(lower_bound=0)
         ).alias("Charge_Capacity(mAh)"),
         (
-            pl.col("Discharge_Capacity(mAh)").abs() + pl.col("inc_capacity").clip(upper_bound=0).abs()
+            pl.col("Discharge_Capacity(mAh)").abs() - pl.col("inc_capacity").clip(upper_bound=0)
         ).alias("Discharge_Capacity(mAh)"),
         (
-            pl.col("Charge_Energy(mWh)").abs() + pl.col("inc_energy").clip(lower_bound=0).abs()
+            pl.col("Charge_Energy(mWh)").abs() + pl.col("inc_energy").clip(lower_bound=0)
         ).alias("Charge_Energy(mWh)"),
         (
-            pl.col("Discharge_Energy(mWh)").abs() + pl.col("inc_energy").clip(upper_bound=0).abs()
+            pl.col("Discharge_Energy(mWh)").abs() - pl.col("inc_energy").clip(upper_bound=0)
         ).alias("Discharge_Energy(mWh)"),
     ])
 
