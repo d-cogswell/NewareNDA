@@ -93,13 +93,15 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             # Merge dataframes
             data_df = data_df.merge(runInfo_df, how='left', on='Index')
             data_df['Step'] = data_df['Step'].ffill()
-            data_df = data_df.merge(step_df, how='left', on='Step').reindex(
-                columns=rec_columns)
+            data_df = data_df.merge(step_df, how='left', on='Step')
 
             # Fill in missing data for ndc 11, 14, 17
             if data_df["Time"].isna().any():
                 logger.info("Interpolating missing data in time, timestamp, capacity, and energy.")
                 _data_interpolation(data_df)
+
+            # Only keep certain columns
+            data_df = data_df.reindex(columns=rec_columns)
 
         # Read and merge Aux data from ndc files
         aux_df = pd.DataFrame([])
