@@ -90,11 +90,14 @@ def read_ndax(
     # Find all auxiliary channel dicts in TestInfo.xml
     aux_dicts = []
     if aux_filenames:
-        step = zf.read('TestInfo.xml').decode("gb2312")
-        config = ET.fromstring(step).find('config')
-        for child in config.find("TestInfo"):
-            if "aux" in child.tag.lower():
-                aux_dicts.append({k: int(v) if v.isdigit() else v for k, v in child.attrib.items()})
+        try:
+            step = zf.read('TestInfo.xml').decode("gb2312")
+            config = ET.fromstring(step).find('config')
+            for child in config.find("TestInfo"):
+                if "aux" in child.tag.lower():
+                    aux_dicts.append({k: int(v) if v.isdigit() else v for k, v in child.attrib.items()})
+        except Exception:
+            logger.exception("Aux files found, but could not read TestInfo.xml!")
 
     # ASSUME channel files are in the same order as TestInfo.xml, map filenames to dicts
     if len(aux_dicts) == len(aux_filenames):
