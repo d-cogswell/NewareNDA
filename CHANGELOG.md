@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [v2025.08.01]
+### Added
+- The Step_Index colum is now returned in addition to Step.
+- Additional range setting 25.
+
+### Fixed
+- The Cycle field now defaults to dtype uint32.
+
+### Changed
+- The mimimum Pandas version is 2.0.0.
+
+
 ## [v2025.06.02]
 ### Fixed
 - Higher-precision Timestamp interpolation.

@@ -1,14 +1,15 @@
 # Names for data fields
 rec_columns = [
-    'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
+    'Index', 'Cycle', 'Step', 'Step_Index', 'Status', 'Time', 'Voltage',
     'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
     'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp']
 
 # Define precision of fields
 dtype_dict = {
     'Index': 'uint32',
-    'Cycle': 'uint16',
+    'Cycle': 'uint32',
     'Step': 'uint32',
+    'Step_Index': 'uint32',
     'Status': 'category',
     'Time': 'float32',
     'Voltage': 'float32',
@@ -79,6 +80,7 @@ multiplier_dict = {
     5: 1e-4,
     10: 1e-3,
     20: 1e-3,
+    25: 1e-3,
     50: 1e-3,
     100: 1e-2,
     200: 1e-2,

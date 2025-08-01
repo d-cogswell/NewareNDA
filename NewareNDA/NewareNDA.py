@@ -245,8 +245,9 @@ def _bytes_to_list(bytes):
     """Helper function for interpreting a byte string"""
 
     # Extract fields from byte string
-    [Index, Cycle, Step] = struct.unpack('<III', bytes[2:14])
-    [Status, Jump, Time, Voltage, Current] = struct.unpack('<BBQii', bytes[12:30])
+    [Index, Cycle, Step_Index, Status] = struct.unpack('<IIHB', bytes[2:13])
+    [Step] = struct.unpack('<I', bytes[10:14])
+    [Time, Voltage, Current] = struct.unpack('<Qii', bytes[14:30])
     [Charge_capacity, Discharge_capacity,
      Charge_energy, Discharge_energy] = struct.unpack('<qqqq', bytes[38:70])
     [Y, M, D, h, m, s] = struct.unpack('<HBBBBB', bytes[70:77])
@@ -263,6 +264,7 @@ def _bytes_to_list(bytes):
         Index,
         Cycle + 1,
         Step,
+        Step_Index,
         state_dict[Status],
         Time/1000,
         Voltage/10000,
@@ -278,7 +280,7 @@ def _bytes_to_list(bytes):
 
 def _bytes_to_list_BTS9(bytes):
     """Helper function to interpret byte strings from BTS9"""
-    [Step, Status] = struct.unpack('<BB', bytes[5:7])
+    [Step_Index, Status] = struct.unpack('<BB', bytes[5:7])
     [Index] = struct.unpack('<I', bytes[12:16])
     [Time, Voltage, Current] = struct.unpack('<Qff', bytes[24:40])
     [Charge_Capacity, Charge_Energy,
@@ -289,7 +291,8 @@ def _bytes_to_list_BTS9(bytes):
     list = [
         Index,
         0,
-        Step,
+        Step_Index,
+        Step_Index,
         state_dict[Status],
         Time/1e6,
         Voltage,
@@ -305,7 +308,7 @@ def _bytes_to_list_BTS9(bytes):
 
 def _bytes_to_list_BTS91(bytes):
     """Helper function to interpret byte strings from BTS9.1"""
-    [Step, Status] = struct.unpack('<BB', bytes[2:4])
+    [Step_Index, Status] = struct.unpack('<BB', bytes[2:4])
     [Index, Time, Time_ns] = struct.unpack('<III', bytes[8:20])
     [Current, Voltage, Capacity, Energy] = struct.unpack('<ffff', bytes[20:36])
     [Date, Date_ns] = struct.unpack('<II', bytes[44:52])
@@ -320,7 +323,8 @@ def _bytes_to_list_BTS91(bytes):
     list = [
         Index,
         0,
-        Step,
+        Step_Index,
+        Step_Index,
         state_dict[Status],
         Time + 1e-9*Time_ns,
         Voltage,
