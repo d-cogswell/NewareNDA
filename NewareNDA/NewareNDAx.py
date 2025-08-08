@@ -140,8 +140,8 @@ def _data_interpolation(df):
     This helper function fills in missing times, capacities, and energies.
     """
     logger.info(
-        ".ndax is using compact data format, "
-        "reconstructing the data in time, timestamp, capacity, and energy."
+        "The output from NewareNDA contains interpolated data in the fields "
+        "Time, Timestamp, Capacity, and Energy."
     )
     # Identify the valid data
     nan_mask = df['Time'].notnull()  # 1 = valid, 0 = missing
