@@ -97,7 +97,6 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
             # Fill in missing data for ndc 11, 14, 17
             if data_df["Time"].isna().any():
-                logger.info("Interpolating missing data in time, timestamp, capacity, and energy.")
                 _data_interpolation(data_df)
 
             # Only keep certain columns
@@ -140,10 +139,14 @@ def _data_interpolation(df):
     Some ndax from from BTS Server 8 do not seem to contain a complete dataset.
     This helper function fills in missing times, capacities, and energies.
     """
+    logger.info(
+        ".ndax is using compact data format, "
+        "reconstructing the data in time, timestamp, capacity, and energy."
+    )
     # Identify the valid data
     nan_mask = df['Time'].notnull()  # 1 = valid, 0 = missing
     nan_groups = nan_mask.cumsum().shift(fill_value=0)  # contiguous nans = same group number
-    
+
     # Forward fill time differences
     df['dt'] = df['dt'].ffill()
 
