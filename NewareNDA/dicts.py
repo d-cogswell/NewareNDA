@@ -1,6 +1,6 @@
 # Names for data fields
 rec_columns = [
-    'Index', 'Cycle', 'Step', 'Status', 'Time', 'Voltage',
+    'Index', 'Cycle', 'Step', 'Step_Index', 'Status', 'Time', 'Voltage',
     'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
     'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp']
 
@@ -9,6 +9,7 @@ dtype_dict = {
     'Index': 'uint32',
     'Cycle': 'uint32',
     'Step': 'uint32',
+    'Step_Index': 'uint32',
     'Status': 'category',
     'Time': 'float32',
     'Voltage': 'float32',

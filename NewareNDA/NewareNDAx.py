@@ -99,8 +99,8 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             if data_df["Time"].isna().any():
                 _data_interpolation(data_df)
 
-            # Only keep certain columns
-            data_df = data_df.reindex(columns=rec_columns)
+        # Select fields to return
+        data_df = data_df.reindex(columns=rec_columns)
 
         # Read and merge Aux data from ndc files
         aux_df = pd.DataFrame([])
@@ -219,8 +219,11 @@ def _read_ndc_2_filetype_1(mm):
         header = mm.find(identifier, header + record_len)
 
     # Postprocessing
-    df = pd.DataFrame(output, columns=rec_columns)
-
+    df = pd.DataFrame(output, columns=[
+        'Index', 'Cycle', 'Step_Index', 'Status', 'Time', 'Voltage',
+        'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
+        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp'])
+    df['Step'] = _count_changes(df['Step_Index'])
     return df
 
 
@@ -268,8 +271,11 @@ def _read_ndc_5_filetype_1(mm):
                 output.append(_bytes_to_list_ndc(i[0]))
 
     # Postprocessing
-    df = pd.DataFrame(output, columns=rec_columns)
-
+    df = pd.DataFrame(output, columns=[
+        'Index', 'Cycle', 'Step_Index', 'Status', 'Time', 'Voltage',
+        'Current(mA)', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
+        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)', 'Timestamp'])
+    df['Step'] = _count_changes(df['Step_Index'])
     return df
 
 
@@ -509,13 +515,13 @@ def _read_ndc_17_filetype_7(mm):
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
         for i in struct.iter_unpack('<ii16sb8si63s', bytes[132:-64]):
-            [Cycle, Step, Status, Step_Index] = [i[0], i[1], i[3], i[5]]
-            if Step_Index != 0:
-                rec.append([Cycle+1, Step, Step_Index, state_dict[Status]])
+            [Cycle, Step_Index, Status, Index] = [i[0], i[1], i[3], i[5]]
+            if Index != 0:
+                rec.append([Cycle+1, Step_Index, state_dict[Status]])
 
     # Create DataFrame
-    df = pd.DataFrame(rec, columns=['Cycle', 'Step', 'Step_Index', 'Status'])
-    df['Step'] = _count_changes(df['Step'])
+    df = pd.DataFrame(rec, columns=['Cycle', 'Step_Index', 'Status'])
+    df['Step'] = _count_changes(df['Step_Index'])
     return df
 
 
@@ -560,7 +566,7 @@ def _bytes_to_list_ndc(bytes):
     """Helper function for interpreting an ndc byte string"""
 
     # Extract fields from byte string
-    [Index, Cycle, Step, Status] = struct.unpack('<IIBB', bytes[8:18])
+    [Index, Cycle, Step_Index, Status] = struct.unpack('<IIBB', bytes[8:18])
     [Time, Voltage, Current] = struct.unpack('<Qii', bytes[23:39])
     [Charge_capacity, Discharge_capacity,
      Charge_energy, Discharge_energy] = struct.unpack('<qqqq', bytes[43:75])
@@ -573,7 +579,7 @@ def _bytes_to_list_ndc(bytes):
     list = [
         Index,
         Cycle + 1,
-        Step,
+        Step_Index,
         state_dict[Status],
         Time/1000,
         Voltage/10000,
