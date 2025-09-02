@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [v2025.09.02]
+### Fixed
+- Addresses the interpolation issue (#4) that affected ndc versions 11, 14, and 17
+
+### Changed
+- The minimum Pandas version is no longer needed.
+
+
 ## [v2025.08.01]
 ### Added
 - The Step_Index colum is now returned in addition to Step.
