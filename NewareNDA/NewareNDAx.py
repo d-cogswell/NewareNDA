@@ -95,8 +95,8 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             data_df['Step'] = data_df['Step'].ffill()
             data_df = data_df.merge(step_df, how='left', on='Step')
 
-            # Fill in missing data - Neware appears to fabricate data
-            if data_df.isnull().any(axis=None):
+            # Fill in missing data for ndc 11, 14, 17
+            if data_df["Time"].isna().any():
                 _data_interpolation(data_df)
 
         # Select fields to return
@@ -139,48 +139,41 @@ def _data_interpolation(df):
     Some ndax from from BTS Server 8 do not seem to contain a complete dataset.
     This helper function fills in missing times, capacities, and energies.
     """
-    logger.warning("IMPORTANT: This ndax has missing data. The output from "
-                   "NewareNDA contains interpolated data!")
-
+    logger.info(
+        "The output from NewareNDA contains interpolated data in the fields "
+        "Time, Timestamp, Capacity, and Energy."
+    )
     # Identify the valid data
-    nan_mask = df['Time'].notnull()
+    nan_mask = df['Time'].notnull()  # 1 = valid, 0 = missing
+    nan_groups = nan_mask.cumsum().shift(fill_value=0)  # contiguous nans = same group number
 
-    # Group by step and run 'inside' interpolation on Time
-    df['Time'] = df.groupby('Step')['Time'].transform(
-        lambda x: pd.Series.interpolate(x, limit_area='inside'))
-    df['Timestamp'] = df.groupby('Step')['Timestamp'].transform(
-        lambda x: pd.Series.interpolate(x, limit_area='inside'))
+    # Forward fill time differences
+    df['dt'] = df['dt'].ffill()
 
-    # Perform extrapolation to generate the remaining missing Time
-    nan_mask2 = df['Time'].notnull()
-    time_inc = df['Time'].diff().ffill().groupby(nan_mask2.cumsum()).cumsum()
-    time = df['Time'].ffill() + time_inc.shift()
-    df['Time'] = df['Time'].where(nan_mask2, time)
-
-    # Fill in missing Timestamps
-    time_inc = df['Timestamp'].diff().ffill().groupby(nan_mask2.cumsum()).cumsum()
-    timestamp = df['Timestamp'].ffill() + time_inc.shift()
-    df['Timestamp'] = df['Timestamp'].where(nan_mask2, timestamp)
+    # The time to add is the cumulative sum of dt over the nan groups
+    time_inc = df['dt'].groupby(nan_groups).cumsum() * ~nan_mask
+    df['Time'] = df['Time'].ffill() + time_inc
+    df['Timestamp'] = df['Timestamp'].ffill() + pd.to_timedelta(time_inc, unit='s')
 
     # Integrate to get capacity and fill missing values
-    capacity = df['Time'].diff()*abs(df['Current(mA)'])/3600
-    inc = capacity.groupby(nan_mask.cumsum()).cumsum()
-    chg = df['Charge_Capacity(mAh)'].ffill() + \
-        inc.where(df['Current(mA)'] > 0, 0).shift()
-    dch = df['Discharge_Capacity(mAh)'].ffill() + \
-        inc.where(df['Current(mA)'] < 0, 0).shift()
-    df['Charge_Capacity(mAh)'] = df['Charge_Capacity(mAh)'].where(nan_mask, chg)
-    df['Discharge_Capacity(mAh)'] = df['Discharge_Capacity(mAh)'].where(nan_mask, dch)
+    capacity = df['dt'] * df['Current(mA)'] / 3600
+    capacity_inc = capacity.groupby(nan_groups).cumsum() * ~nan_mask
+    df['Charge_Capacity(mAh)'] = (
+        df['Charge_Capacity(mAh)'].ffill().abs() + capacity_inc.clip(lower=0).abs()
+    )
+    df['Discharge_Capacity(mAh)'] = (
+        df['Discharge_Capacity(mAh)'].ffill().abs() + capacity_inc.clip(upper=0).abs()
+    )
 
     # Integrate to get energy and fill missing values
     energy = capacity*df['Voltage']
-    inc = energy.groupby(nan_mask.cumsum()).cumsum()
-    chg = df['Charge_Energy(mWh)'].ffill() + \
-        inc.where(df['Current(mA)'] > 0, 0).shift()
-    dch = df['Discharge_Energy(mWh)'].ffill() + \
-        inc.where(df['Current(mA)'] < 0, 0).shift()
-    df['Charge_Energy(mWh)'] = df['Charge_Energy(mWh)'].where(nan_mask, chg)
-    df['Discharge_Energy(mWh)'] = df['Discharge_Energy(mWh)'].where(nan_mask, dch)
+    energy_inc = energy.groupby(nan_groups).cumsum() * ~nan_mask
+    df['Charge_Energy(mWh)'] = (
+        df['Charge_Energy(mWh)'].ffill().abs() + energy_inc.clip(lower=0).abs()
+    )
+    df['Discharge_Energy(mWh)'] = (
+        df['Discharge_Energy(mWh)'].ffill().abs() + energy_inc.clip(upper=0).abs()
+    )
 
 
 def read_ndc(file):
@@ -398,21 +391,22 @@ def _read_ndc_11_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih', bytes[132:-63]):
+        for i in struct.iter_unpack('<ixffff8xiiiih', bytes[132:-16]):
             Time = i[0]
-            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
-            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
-            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
-            Msec = i[10]
+            [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
+            [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
+            dt = i[5]
+            [Timestamp, Step, Index] = [i[6], i[7], i[8]]
+            Msec = i[9]
             if Index != 0:
-                rec.append([Time/1000,
+                rec.append([Time/1000, dt/1000,
                             Charge_Capacity/3600, Discharge_Capacity/3600,
                             Charge_Energy/3600, Discharge_Energy/3600,
                             datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
 
     # Create DataFrame
     df = pd.DataFrame(rec, columns=[
-        'Time',
+        'Time', 'dt',
         'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
         'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
         'Timestamp', 'Step', 'Index']).astype({'Time': 'float'})
@@ -478,21 +472,22 @@ def _read_ndc_14_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih8s', bytes[132:-59]):
+        for i in struct.iter_unpack('<ixffff8xiiiih8s', bytes[132:-4]):
             Time = i[0]
-            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
-            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
-            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
-            Msec = i[10]
+            [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
+            [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
+            dt = i[5]
+            [Timestamp, Step, Index] = [i[6], i[7], i[8]]
+            Msec = i[9]
             if Index != 0:
-                rec.append([Time/1000,
+                rec.append([Time/1000, dt/1000,
                             Charge_Capacity*1000, Discharge_Capacity*1000,
                             Charge_Energy*1000, Discharge_Energy*1000,
                             datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
 
     # Create DataFrame
     df = pd.DataFrame(rec, columns=[
-        'Time',
+        'Time', 'dt',
         'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
         'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
         'Timestamp', 'Step', 'Index']).astype({'Time': 'float'})
@@ -540,21 +535,22 @@ def _read_ndc_17_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siiih53s', bytes[232:-64]):
+        for i in struct.iter_unpack('<ixffff8xiiiih53s', bytes[132:-64]):
             Time = i[0]
-            [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
-            [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
-            [Timestamp, Step, Index] = [i[7], i[8], i[9]]
-            Msec = i[10]
+            [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
+            [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
+            dt = i[5]
+            [Timestamp, Step, Index] = [i[6], i[7], i[8]]
+            Msec = i[9]
             if Index != 0:
-                rec.append([Time/1000,
+                rec.append([Time/1000, dt/1000,
                             Charge_Capacity*1000, Discharge_Capacity*1000,
                             Charge_Energy*1000, Discharge_Energy*1000,
                             datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
 
     # Create DataFrame
     df = pd.DataFrame(rec, columns=[
-        'Time',
+        'Time', 'dt',
         'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
         'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
         'Timestamp', 'Step', 'Index'])
