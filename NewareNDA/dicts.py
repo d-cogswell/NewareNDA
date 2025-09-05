@@ -101,7 +101,7 @@ multiplier_dict = {
 
 # Renaming aux columns by ChlType
 aux_chl_type_columns = {
-    103: "T",
-    335: "t",
-    345: "H",
+    "103": "T",
+    "335": "t",
+    "345": "H",
 }

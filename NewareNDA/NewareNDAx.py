@@ -82,13 +82,9 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             try:
                 step = zf.extract('TestInfo.xml', path=tmpdir)
                 with open(step, 'r', encoding='gb2312') as f:
-                    config = ET.fromstring(f.read()).find('config')
+                    testinfo = ET.fromstring(f.read()).find('config/TestInfo')
 
-                aux_dicts = [
-                    {k: int(v) if v.isdigit() else v for k, v in child.attrib.items()}
-                    for child in config.find("TestInfo")
-                    if "aux" in child.tag.lower()
-                ]
+                aux_dicts = [k.attrib for k in testinfo if "Aux" in k.tag] if testinfo is not None else []
 
                 # Map filenames to dicts, assume files are in same order as TestInfo.xml
                 if len(aux_dicts) == len(aux_filenames):
