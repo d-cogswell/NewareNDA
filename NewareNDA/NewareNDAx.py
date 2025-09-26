@@ -634,7 +634,7 @@ def _read_ndc_17_filetype_7(mm):
 
     # Create DataFrame
     df = pd.DataFrame(rec, columns=['Cycle', 'Step_Index', 'Status'])
-    df['Step'] = _count_changes(df['Step_Index'])
+    df['Step'] = df.index + 1
     return df
 
 
