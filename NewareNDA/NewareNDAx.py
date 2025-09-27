@@ -533,6 +533,86 @@ def _read_ndc_14_filetype_18(mm):
     return df
 
 
+def _read_ndc_16_filetype_1(mm):
+    mm_size = mm.size()
+    record_len = 4096
+    header = 4096
+
+    # Read data records
+    rec = []
+    mm.seek(header)
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<ff', bytes[132:-4]):
+            if (i[0] != 0):
+                rec.append([1e-4*i[0], i[1]])
+
+    # Create DataFrame
+    df = pd.DataFrame(rec, columns=['Voltage', 'Current(mA)'])
+    df['Index'] = df.index + 1
+    return df
+
+
+def _read_ndc_16_filetype_5(mm):
+    record_len = 4096
+    header = 4096
+
+    # Read data records
+    aux = []
+    mm.seek(header)
+    while mm.tell() < mm.size():
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<xfh', bytes[132:-2]):
+            aux.append([1e-4*i[0], i[1]/10])
+
+    # Create DataFrame
+    aux_df = pd.DataFrame(aux, columns=['V', 'T'])
+    aux_df['Index'] = aux_df.index + 1
+
+    return aux_df
+
+
+def _read_ndc_16_filetype_7(mm):
+    return _read_ndc_17_filetype_7(mm)
+
+
+def _read_ndc_16_filetype_18(mm):
+    mm_size = mm.size()
+    record_len = 4096
+    header = 4096
+
+    # Read data records
+    rec = []
+    mm.seek(header)
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<ixffff8xiiiih53x', bytes[132:-64]):
+            Time = i[0]
+            [Charge_Capacity, Discharge_Capacity] = [i[1], i[2]]
+            [Charge_Energy, Discharge_Energy] = [i[3], i[4]]
+            dt = i[5]
+            [Timestamp, Step, Index] = [i[6], i[7], i[8]]
+            Msec = i[9]
+            if Index != 0:
+                rec.append([Time/1000, dt/1000,
+                            Charge_Capacity/3600, Discharge_Capacity/3600,
+                            Charge_Energy/3600, Discharge_Energy/3600,
+                            datetime.fromtimestamp(Timestamp + Msec/1000, timezone.utc), Step, Index])
+
+    # Create DataFrame
+    df = pd.DataFrame(rec, columns=[
+        'Time', 'dt',
+        'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
+        'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
+        'Timestamp', 'Step', 'Index'])
+
+    # Convert timestamp to local timezone
+    tz = datetime.now().astimezone().tzinfo
+    df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
+
+    return df
+
+
 def _read_ndc_17_filetype_1(mm):
     return _read_ndc_14_filetype_1(mm)
 
