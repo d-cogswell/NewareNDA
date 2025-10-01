@@ -23,7 +23,8 @@ dtype_dict = {
 aux_dtype_dict = {
     'V': 'float32',
     'T': 'float32',
-    't': 'float32'
+    't': 'float32',
+    'H': 'float32',
 }
 
 # Dictionary mapping Status integer to string
@@ -97,4 +98,11 @@ multiplier_dict = {
     60000: 1e-1,
     100000: 1e-1,
     200000: 1e-1,
+}
+
+# Renaming aux columns by ChlType
+aux_chl_type_columns = {
+    "103": "T",
+    "335": "t",
+    "345": "H",
 }
