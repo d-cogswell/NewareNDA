@@ -354,8 +354,7 @@ def _read_ndc_11_filetype_1(mm):
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
         for i in struct.iter_unpack('<ff', bytes[132:-4]):
-            if (i[0] != 0):
-                rec.append([1e-4*i[0], i[1]])
+            rec.append([1e-4*i[0], i[1]])
 
     # Create DataFrame
     df = pd.DataFrame(rec, columns=['Voltage', 'Current(mA)'])
