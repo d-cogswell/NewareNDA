@@ -1,5 +1,7 @@
 import logging
 
+import pandas as pd
+
 logger = logging.getLogger('newarenda')
 
 
@@ -89,3 +91,8 @@ def _id_first_state(df):
         cycle_mode = 'chg'
 
     return cycle_mode.lower()
+
+
+def _drop_empty_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows with 0 voltage and current."""
+    return df[(df['Voltage'] != 0) | (df['Current(mA)'] != 0)]

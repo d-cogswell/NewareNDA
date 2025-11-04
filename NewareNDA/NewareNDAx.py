@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import pandas as pd
 
-from .utils import _generate_cycle_number, _count_changes
+from .utils import _generate_cycle_number, _count_changes, _drop_empty_rows
 from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
     multiplier_dict, aux_chl_type_columns
 
@@ -163,6 +163,9 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
     if software_cycle_number:
         data_df['Cycle'] = _generate_cycle_number(data_df, cycle_mode)
+
+    # Drop empty rows
+    data_df = _drop_empty_rows(data_df)
 
     return data_df.astype(dtype=dtype_dict)
 
@@ -463,8 +466,7 @@ def _read_ndc_14_filetype_1(mm):
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
         for i in struct.iter_unpack('<ff', bytes[132:-4]):
-            if (i[0] != 0):
-                rec.append([i[0], 1000*i[1]])
+            rec.append([i[0], 1000*i[1]])
 
     # Create DataFrame
     df = pd.DataFrame(rec, columns=['Voltage', 'Current(mA)'])
