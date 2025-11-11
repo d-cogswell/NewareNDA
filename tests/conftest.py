@@ -13,7 +13,13 @@ def pytest_addoption(parser):
         "--refDir",
         action="store",
         default=osp.join(osp.dirname(osp.abspath(__file__)), 'reference'),
-        help="The directory with the base test results"
+        help="The directory with NewareNDA reference results"
+    )
+    parser.addoption(
+        "--refDirBTSDA",
+        action="store",
+        default=osp.join(osp.dirname(osp.abspath(__file__)), 'reference_btsda'),
+        help="The directory with BTSDA reference results"
     )
     parser.addoption(
         "--no_software_cycle_number",
@@ -31,6 +37,7 @@ def pytest_addoption(parser):
 def pytest_generate_tests(metafunc):
     nda_dir = metafunc.config.getoption('--ndaDir')
     ref_dir = metafunc.config.getoption('--refDir')
+    btsda_ref_dir = metafunc.config.getoption('--refDirBTSDA')
     software_cycle_number = metafunc.config.getoption('--no_software_cycle_number')
     cycle_mode = metafunc.config.getoption('--cycle_mode')
 
@@ -38,9 +45,11 @@ def pytest_generate_tests(metafunc):
     nda_files = glob.glob(nda_dir + '/**/*.nda*', recursive=True)
     ref_files = [osp.join(ref_dir, f"{osp.splitext(osp.basename(f))[0]}.ftr")
                  for f in nda_files]
+    btsda_ref_files = [osp.join(btsda_ref_dir, f"{osp.splitext(osp.basename(f))[0]}.parquet")
+                       for f in nda_files]
     cycle_modes = [cycle_mode for f in nda_files]
     software_cycle_numbers = [software_cycle_number for f in nda_files]
 
     metafunc.parametrize(
-        "nda_file, ref_file, software_cycle_number, cycle_mode",
-        list(zip(nda_files, ref_files, software_cycle_numbers, cycle_modes)))
+        "nda_file, ref_file, btsda_ref_file, software_cycle_number, cycle_mode",
+        list(zip(nda_files, ref_files, btsda_ref_files, software_cycle_numbers, cycle_modes)))
