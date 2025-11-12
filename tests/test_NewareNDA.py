@@ -111,3 +111,18 @@ def test_vs_btsda(
         check_names=False,
         check_dtype=False,
     )
+
+    # Date - Neware usually timezone unaware, check offset is at least sensible
+    start_test = df["Timestamp"].iloc[0]
+    start_ref = ref_df["Date"].iloc[0]
+    start_test = start_test.replace(tzinfo=None)
+    start_ref = start_ref.replace(tzinfo=None)
+    assert abs((start_test - start_ref).total_seconds()) < 24*60*60, "Date does not match"
+
+    # Check that timestamps are equal ignoring the offset
+    pd.testing.assert_series_equal(
+        df["Timestamp"] - df["Timestamp"].iloc[0],
+        ref_df["Date"] - ref_df["Date"].iloc[0],
+        check_names=False,
+        check_dtype=False,
+    )
