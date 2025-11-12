@@ -52,4 +52,6 @@ def pytest_generate_tests(metafunc):
 
     metafunc.parametrize(
         "nda_file, ref_file, btsda_ref_file, software_cycle_number, cycle_mode",
-        list(zip(nda_files, ref_files, btsda_ref_files, software_cycle_numbers, cycle_modes)))
+        list(zip(nda_files, ref_files, btsda_ref_files, software_cycle_numbers, cycle_modes)),
+        ids = [osp.basename(f) for f in nda_files]
+    )
