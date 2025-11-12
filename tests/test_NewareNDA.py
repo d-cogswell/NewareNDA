@@ -126,3 +126,45 @@ def test_vs_btsda(
         check_names=False,
         check_dtype=False,
     )
+
+    # Capacity and energy
+    # These are more complicated to check, Neware stores them in a few different ways
+    # In NewareNDA there are two columns, charge and discharge capacity/energy, which are always positive
+    # In BTSDA outputs there is one column, which can be negative, and can go up and down within one step
+    # In some BTSDA outputs the capacity/energy does not count 'reverse' currents during charge or discharge
+
+    abs_tol = 3e-4  # in mAh and mWh
+    rel_tol = 1e-6
+
+    # Capacity
+    df["Capacity(mAh)"] = (df["Charge_Capacity(mAh)"] - df["Discharge_Capacity(mAh)"]).abs()
+    abs_diff = df["Capacity(mAh)"] - ref_df["Capacity(mAs)"].abs()/3600
+    rel_diff = abs_diff / ref_df["Capacity(mAs)"].abs()/3600
+    if ((abs_diff > abs_tol) & (rel_diff > rel_tol)).any():
+        # If this fails, sometimes Neware does not count negative current during charge towards the capacity
+        cap_ignore_negs = (
+            df.groupby("Step")["Capacity(mAh)"]
+            .transform(lambda s: s.abs().cummax())
+        )
+        abs_diff = cap_ignore_negs - ref_df["Capacity(mAs)"].abs()/3600
+        rel_diff = abs_diff / ref_df["Capacity(mAs)"].abs()/3600
+        if ((abs_diff > abs_tol) & (rel_diff > rel_tol)).any():
+            msg = "Capacity columns are different."
+            raise ValueError(msg)
+
+    # Energy
+    df["Energy(mWh)"] = (df["Charge_Energy(mWh)"] - df["Discharge_Energy(mWh)"]).abs()
+    abs_diff = df["Energy(mWh)"] - ref_df["Energy(mWs)"].abs()/3600
+    rel_diff = abs_diff / ref_df["Energy(mWs)"].abs()/3600
+    if ((abs_diff > abs_tol) & (rel_diff > rel_tol)).any():
+        # If this fails, sometimes Neware does not count negative current during charge towards the energy
+        cap_ignore_negs = (
+            df.groupby("Step")["Energy(mWh)"]
+            .transform(lambda s: s.abs().cummax())
+        )
+        abs_diff = cap_ignore_negs - ref_df["Energy(mWs)"].abs()/3600
+        rel_diff = abs_diff / ref_df["Energy(mWs)"].abs()/3600
+        if ((abs_diff > abs_tol) & (rel_diff > rel_tol)).any():
+            msg = "Energy columns are different."
+            raise ValueError(msg)
+
