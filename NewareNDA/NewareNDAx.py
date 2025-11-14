@@ -449,7 +449,7 @@ def _read_ndc_11_filetype_18(mm):
     tz = datetime.now().astimezone().tzinfo
     df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
 
-    return df
+    return df.drop_duplicates(subset="Index", keep="first")
 
 
 def _read_ndc_14_filetype_1(mm):
@@ -530,7 +530,7 @@ def _read_ndc_14_filetype_18(mm):
     tz = datetime.now().astimezone().tzinfo
     df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
 
-    return df
+    return df.drop_duplicates(subset="Index", keep="first")
 
 
 def _read_ndc_16_filetype_1(mm):
@@ -677,7 +677,7 @@ def _read_ndc_17_filetype_18(mm):
     tz = datetime.now().astimezone().tzinfo
     df['Timestamp'] = df['Timestamp'].dt.tz_convert(tz)
 
-    return df
+    return df.drop_duplicates(subset="Index", keep="first")
 
 
 def _bytes_to_list_ndc(bytes):
