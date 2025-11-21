@@ -30,5 +30,3 @@ jobs:
 
       - name: Coveralls
         uses: coverallsapp/github-action@v2
-        with:
-          coverage-reporter-version: v0.6.15
