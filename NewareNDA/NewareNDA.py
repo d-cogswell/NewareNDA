@@ -310,7 +310,7 @@ def _bytes_to_list_BTS91(bytes):
     """Helper function to interpret byte strings from BTS9.1"""
     [Step_Index, Status] = struct.unpack('<BB', bytes[2:4])
     [Index, Time, Time_ns] = struct.unpack('<III', bytes[8:20])
-    [Current, Voltage, Capacity, Energy] = struct.unpack('<ffff', bytes[20:36])
+    [Current, Voltage, Capacity, Energy, Cycle] = struct.unpack('<ffffI', bytes[20:40])
     [Date, Date_ns] = struct.unpack('<II', bytes[44:52])
 
     # Convert capacity and energy to charge and discharge fields
@@ -322,7 +322,7 @@ def _bytes_to_list_BTS91(bytes):
     # Create a dictionary for the record
     list = [
         Index,
-        0,
+        Cycle + 1,
         Step_Index,
         Step_Index,
         state_dict[Status],
