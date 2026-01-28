@@ -35,7 +35,7 @@ def _generate_cycle_number(df, cycle_mode='chg'):
     inc.iat[0] = 1
 
     # Convert to numpy arrays
-    inc = inc.values
+    inc = inc.values.copy()
     status = df['Status'].values
 
     # Increment the cycle at a charge step after there has been a discharge, or vice versa
