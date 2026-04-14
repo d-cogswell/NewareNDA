@@ -12,6 +12,8 @@ import re
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import pandas as pd
+from pathlib import Path
+import xmltodict
 
 from .utils import _generate_cycle_number, _count_changes
 from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
@@ -726,3 +728,15 @@ def _aux_bytes_74_to_list_ndc(bytes):
     [T, t] = struct.unpack('<hh', bytes[41:45])
 
     return [Index, Aux, V/10000, T/10, t/10]
+
+
+def read_ndax_metadata(file: str | Path) -> dict[str, str | float]:
+    """Read metadata from VersionInfo.xml and Step.xml in a Neware .ndax file."""
+    metadata = {}
+    with zipfile.ZipFile(str(file)) as zf:
+        xml_files = [f for f in zf.namelist() if f.endswith(".xml")]
+        for xml_file in xml_files:
+            name = xml_file.split("/")[-1].split(".")[0]
+            xml_tree = ET.fromstring(zf.read(xml_file).decode(errors="ignore")).find("config")
+            metadata[name] = xmltodict.parse(ET.tostring(xml_tree).decode(), attr_prefix="")["config"]
+    return metadata

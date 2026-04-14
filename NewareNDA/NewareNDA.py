@@ -7,12 +7,13 @@ import mmap
 import struct
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 import pandas as pd
 
 from .utils import _generate_cycle_number, _count_changes
 from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
     multiplier_dict
-from .NewareNDAx import read_ndax
+from .NewareNDAx import read_ndax, read_ndax_metadata
 
 logger = logging.getLogger('newarenda')
 
@@ -52,6 +53,24 @@ def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
     else:
         logger.error("File type not supported!")
         raise TypeError("File type not supported!")
+
+def read_metadata(file: str | Path) -> dict[str, str | float]:
+    """Read metadata from a Neware .nda or .ndax file.
+
+    Args:
+        file: Path of .nda or .ndax file
+
+    Returns:
+        Dictionary containing metadata
+
+    """
+    file = Path(file)
+    if file.suffix == ".nda":
+        return read_nda_metadata(file)
+    if file.suffix == ".ndax":
+        return read_ndax_metadata(file)
+    msg = "File type not supported!"
+    raise ValueError(msg)
 
 
 def read_nda(file, software_cycle_number, cycle_mode='chg'):
@@ -351,3 +370,79 @@ def _aux_bytes_to_list_BTS91(bytes):
     [Index] = struct.unpack('<I', bytes[8:12])
     [T] = struct.unpack('<f', bytes[52:56])
     return [Index, 1, T, None]
+
+
+def read_nda_metadata(file: str | Path) -> dict[str, str | int | float]:
+    """Read metadata from a Neware .nda file.
+
+    Args:
+        file: Path of .nda file to read
+
+    Returns:
+        Dictionary containing metadata
+
+    """
+    file = Path(file)
+    with file.open("rb") as f:
+        mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+
+    if mm.read(6) != b"NEWARE":
+        msg = f"{file} does not appear to be a Neware file."
+        raise ValueError(msg)
+
+    metadata: dict[str, int | str | float] = {}
+
+    # Get the file version
+    metadata["nda_version"] = int(mm[14])
+
+    # Try to find server and client version info
+    version_loc = mm.find(b"BTSServer")
+    if version_loc != -1:
+        mm.seek(version_loc)
+        server = mm.read(50).strip(b"\x00").decode()
+        metadata["server_version"] = server
+
+        mm.seek(50, 1)
+        client = mm.read(50).strip(b"\x00").decode()
+        metadata["client_version"] = client
+    else:
+        xwj = mm.find(b"BTS_XWJ", 0, 1024)
+        if xwj != -1:
+            end = mm.find(b"\x00", xwj, 1024)
+            if end != -1:
+                metadata["server_version"] = mm[xwj:end].decode().strip()
+        else:
+            logger.info("BTS version not found!")
+
+    # NDA 29 specific fields
+    if metadata["nda_version"] == 29:
+        metadata["active_mass_mg"] = int.from_bytes(mm[152:156], "little") / 1000
+        metadata["remarks"] = mm[2317:2417].decode("ASCII", errors="ignore").replace(chr(0), "").strip()
+
+    # NDA 130 specific fields
+    elif metadata["nda_version"] == 130:
+        subver = int(mm[1024])
+        if subver == 85:
+            metadata["bts_version"] = "9.1"
+            ver = mm.find(b"9.1.")
+            if ver != -1:
+                end = mm.find(b"\x00", ver)
+                if end != 1:
+                    metadata["bts_version"] = mm[ver:end].decode()
+        elif subver == 18:
+            metadata["bts_version"] = "9.0"
+            ver = mm.find(b"9.0.")
+            if ver != -1:
+                end = mm.find(b"\x00", ver)
+                if end != 1:
+                    metadata["bts_version"] = mm[ver:end].decode()
+
+        # Identify footer
+        footer = mm.rfind(b"\x06\x00\xf0\x1d\x81\x00\x03\x00\x61\x90\x71\x90\x02\x7f\xff\x00", 1024)
+        if footer != -1:
+            mm.seek(footer + 16)
+            buf = mm.read(499)
+            metadata["active_mass_mg"] = struct.unpack("<d", buf[-8:])[0]
+            metadata["remarks"] = buf[363:491].decode("ASCII").replace(chr(0), "").strip()
+
+    return metadata
