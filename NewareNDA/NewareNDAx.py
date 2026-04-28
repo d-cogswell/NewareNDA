@@ -51,16 +51,6 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         except Exception:
             pass
 
-        # Read active mass
-        try:
-            step = zf.extract('Step.xml', path=tmpdir)
-            with open(step, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config')
-            active_mass = float(config.find('Head_Info/SCQ').attrib['Value'])
-            logger.info(f"Active mass: {active_mass/1000} mg")
-        except Exception:
-            pass
-
         # Find all auxiliary channel files
         # Auxiliary files files need to be matched to entries in TestInfo.xml
         # Sort by the numbers in the filename, assume same order in TestInfo.xml
