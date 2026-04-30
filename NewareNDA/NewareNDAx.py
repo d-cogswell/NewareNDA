@@ -2,6 +2,7 @@
 # Author: Daniel Cogswell
 # Email: danielcogswell@ses.ai
 
+from __future__ import annotations
 import sys
 import mmap
 import struct
