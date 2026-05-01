@@ -2,7 +2,6 @@
 # Author: Daniel Cogswell
 # Email: danielcogswell@ses.ai
 
-from __future__ import annotations
 import sys
 import mmap
 import struct
@@ -721,8 +720,16 @@ def _aux_bytes_74_to_list_ndc(bytes):
     return [Index, Aux, V/10000, T/10, t/10]
 
 
-def read_ndax_metadata(file: str | Path) -> dict[str, str | float]:
-    """Read metadata from VersionInfo.xml and Step.xml in a Neware .ndax file."""
+def read_ndax_metadata(file):
+    """Read metadata from xml files inside in a Neware .ndax file.
+    
+    Args:
+        file (str | Path): Path of .nda file to read.
+
+    Returns:
+        dict[str, str | float | dict]: Dictionary containing metadata.
+    
+    """
     metadata = {}
     with zipfile.ZipFile(str(file)) as zf:
         xml_files = [f for f in zf.namelist() if f.endswith(".xml")]

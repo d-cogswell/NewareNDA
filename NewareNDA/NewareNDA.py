@@ -2,7 +2,6 @@
 # Author: Daniel Cogswell
 # Email: danielcogswell@ses.ai
 
-from __future__ import annotations
 import os
 import mmap
 import struct
@@ -55,14 +54,14 @@ def read(file, software_cycle_number=True, cycle_mode='chg', log_level='INFO'):
         logger.error("File type not supported!")
         raise TypeError("File type not supported!")
 
-def read_metadata(file: str | Path) -> dict[str, str | float]:
+def read_metadata(file):
     """Read metadata from a Neware .nda or .ndax file.
 
     Args:
-        file: Path of .nda or .ndax file
+        file (str | Path): Path of .nda or .ndax file
 
     Returns:
-        Dictionary containing metadata
+        dict[str, str | float | dict]: Dictionary containing metadata
 
     """
     file = Path(file)
@@ -343,14 +342,14 @@ def _aux_bytes_to_list_BTS91(bytes):
     return [Index, 1, T, None]
 
 
-def read_nda_metadata(file: str | Path) -> dict[str, str | int | float]:
+def read_nda_metadata(file):
     """Read metadata from a Neware .nda file.
 
     Args:
-        file: Path of .nda file to read
+        file (str | Path): Path of .nda file to read
 
     Returns:
-        Dictionary containing metadata
+        dict[str, str | float]: Dictionary containing metadata
 
     """
     file = Path(file)
