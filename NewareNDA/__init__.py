@@ -1,2 +1,2 @@
 from .version import __version__
-from .NewareNDA import read
+from .NewareNDA import read, read_metadata

@@ -32,3 +32,10 @@ def test_NewareNDAcli(nda_file, ref_file, software_cycle_number, cycle_mode):
     ref_df['Timestamp'] = ref_df['Timestamp'].apply(datetime.timestamp)
 
     pd.testing.assert_frame_equal(df, ref_df, check_like=True)
+
+
+def test_NewareNDA_metadata(nda_file, ref_file, software_cycle_number, cycle_mode):
+    """Ensure that read metadata doesn't crash and returns a non-empty dict."""
+    res = NewareNDA.read_metadata(nda_file)
+    assert isinstance(res, dict)
+    assert res

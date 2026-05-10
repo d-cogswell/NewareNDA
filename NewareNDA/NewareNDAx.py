@@ -12,6 +12,8 @@ import re
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 import pandas as pd
+from pathlib import Path
+import xmltodict
 
 from .utils import _generate_cycle_number, _count_changes
 from .dicts import rec_columns, dtype_dict, aux_dtype_dict, state_dict, \
@@ -46,16 +48,6 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             logger.info(f"Client version: {config.attrib['CurrClientVer']}")
             logger.info(f"Control unit version: {config.attrib['ZwjVersion']}")
             logger.info(f"Tester version: {config.attrib['MainXwjVer']}")
-        except Exception:
-            pass
-
-        # Read active mass
-        try:
-            step = zf.extract('Step.xml', path=tmpdir)
-            with open(step, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config')
-            active_mass = float(config.find('Head_Info/SCQ').attrib['Value'])
-            logger.info(f"Active mass: {active_mass/1000} mg")
         except Exception:
             pass
 
@@ -726,3 +718,23 @@ def _aux_bytes_74_to_list_ndc(bytes):
     [T, t] = struct.unpack('<hh', bytes[41:45])
 
     return [Index, Aux, V/10000, T/10, t/10]
+
+
+def read_ndax_metadata(file):
+    """Read metadata from xml files inside in a Neware .ndax file.
+    
+    Args:
+        file (str | Path): Path of .nda file to read.
+
+    Returns:
+        dict[str, str | float | dict]: Dictionary containing metadata.
+    
+    """
+    metadata = {}
+    with zipfile.ZipFile(str(file)) as zf:
+        xml_files = [f for f in zf.namelist() if f.endswith(".xml")]
+        for xml_file in xml_files:
+            name = xml_file.split("/")[-1].split(".")[0]
+            xml_tree = ET.fromstring(zf.read(xml_file).decode(errors="ignore")).find("config")
+            metadata[name] = xmltodict.parse(ET.tostring(xml_tree).decode(), attr_prefix="")["config"]
+    return metadata
