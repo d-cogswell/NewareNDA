@@ -661,6 +661,7 @@ def _read_ndc_17_filetype_18(mm):
         'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)',
         'Charge_Energy(mWh)', 'Discharge_Energy(mWh)',
         'Timestamp', 'Step', 'Index'])
+    df["Step"] = _count_changes(df["Step"])
 
     # Convert timestamp to local timezone
     tz = datetime.now().astimezone().tzinfo
