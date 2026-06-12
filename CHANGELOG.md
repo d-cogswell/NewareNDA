@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [v2026.06.11]
+### Added
+- read_metadata() returns a dictionary of metadata.
+
+### Fixed
+- Step number in ndc 17 (filetype 18)
+
+
 ## [v2026.02.02]
 ### Fixed
 - Compatibility with Pandas 3.0.0.
